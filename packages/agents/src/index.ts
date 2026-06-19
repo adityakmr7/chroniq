@@ -18,6 +18,8 @@ export { generateASS, generateSRT, groupAlignments } from "./caption.ts";
 export { composeVideo } from "./video.ts";
 export type { VideoSceneInput } from "./video.ts";
 
+export { renderVideoWithRemotion } from "./remotion/render.ts";
+
 export { generateThumbnailPrompt, generateThumbnail } from "./thumbnail.ts";
 
 export { generateYouTubeMetadata, getAccessToken, uploadVideo, uploadThumbnail } from "./youtube.ts";

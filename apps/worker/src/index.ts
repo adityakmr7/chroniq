@@ -277,7 +277,7 @@ async function processVideoJob(job: Job) {
       outputDir,
       "narration.mp3",
       sceneInputs,
-      "captions.ass",
+      alignments,
       finalVideoName,
       { enableZoom: true, isShort }
     );

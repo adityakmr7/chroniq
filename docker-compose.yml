@@ -54,6 +54,7 @@ services:
       - KOKORO_URL=http://kokoro-tts:8880
       - KOKORO_VOICE=${KOKORO_VOICE}
       - LOCAL_SD_URL=http://host.docker.internal:7860
+      - API_URL=http://api:3000
     depends_on:
       - postgres
       - redis
@@ -88,6 +89,7 @@ services:
       - KOKORO_URL=http://kokoro-tts:8880
       - KOKORO_VOICE=${KOKORO_VOICE}
       - LOCAL_SD_URL=http://host.docker.internal:7860
+      - API_URL=http://api:3000
     depends_on:
       - postgres
       - redis

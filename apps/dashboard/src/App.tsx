@@ -44,24 +44,48 @@ function slugify(text: string): string {
 function getProgressInfo(status: string) {
   switch (status) {
     case "queued":
-      return { percent: 5, label: "Waiting in queue...", color: "#3b82f6" };
+      return { percent: 5, label: "Waiting in queue...", color: "#3b82f6", indeterminate: false };
     case "researching":
-      return { percent: 20, label: "🔍 Researching topic details...", color: "#a855f7" };
+      return { percent: 20, label: "🔍 Researching topic details...", color: "#a855f7", indeterminate: false };
     case "generating_script":
-      return { percent: 40, label: "✍️ Writing script content...", color: "#ec4899" };
+      return { percent: 40, label: "✍️ Writing script content...", color: "#ec4899", indeterminate: false };
     case "generating_voice":
-      return { percent: 60, label: "🎙️ Generating voiceover narration...", color: "#f59e0b" };
+      return { percent: 60, label: "🎙️ Generating voiceover narration...", color: "#f59e0b", indeterminate: false };
     case "generating_visuals":
-      return { percent: 75, label: "🎨 Generating dynamic image scenes...", color: "#06b6d4" };
+      return { percent: 75, label: "🎨 Generating dynamic image scenes...", color: "#06b6d4", indeterminate: false };
     case "rendering_video":
-      return { percent: 90, label: "🎥 Rendering final video via FFmpeg...", color: "#10b981" };
+      return { percent: 90, label: "🎬 Rendering final video via Remotion...", color: "#10b981", indeterminate: true };
+    case "generating_captions":
+      return { percent: 82, label: "✍️ Compiling captions...", color: "#14b8a6", indeterminate: false };
+    case "publishing":
+      return { percent: 97, label: "🚀 Publishing to YouTube...", color: "#f43f5e", indeterminate: false };
     case "completed":
-      return { percent: 100, label: "✅ Generation completed!", color: "#22c55e" };
+      return { percent: 100, label: "✅ Generation completed!", color: "#22c55e", indeterminate: false };
     case "failed":
-      return { percent: 100, label: "❌ Generation failed", color: "#ef4444" };
+      return { percent: 100, label: "❌ Generation failed", color: "#ef4444", indeterminate: false };
     default:
-      return { percent: 0, label: "Unknown status", color: "#6b7280" };
+      return { percent: 0, label: "Unknown status", color: "#6b7280", indeterminate: false };
   }
+}
+
+// Animated shimmer progress bar — used when rendering is in progress and progress is indeterminate
+function ProgressBar({ percent, color, indeterminate }: { percent: number; color: string; indeterminate: boolean; }) {
+  if (indeterminate) {
+    return (
+      <div style={{ width: "100%", height: "100%", position: "relative", overflow: "hidden", backgroundColor: "rgba(16,185,129,0.15)", borderRadius: "inherit" }}>
+        <div style={{
+          position: "absolute",
+          top: 0,
+          left: 0,
+          height: "100%",
+          width: "45%",
+          background: `linear-gradient(90deg, transparent, ${color}, transparent)`,
+          animation: "shimmer 1.6s ease-in-out infinite",
+        }} />
+      </div>
+    );
+  }
+  return <div style={{ width: `${percent}%`, height: "100%", backgroundColor: color, transition: "width 0.4s ease", borderRadius: "inherit" }} />;
 }
 
 export default function App() {
@@ -413,10 +437,10 @@ export default function App() {
                         <div style={{ margin: "0.5rem 0" }}>
                           <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.7rem", color: "hsl(var(--text-muted))", marginBottom: "0.25rem" }}>
                             <span>{getProgressInfo(vid.status).label}</span>
-                            <span>{getProgressInfo(vid.status).percent}%</span>
+                            <span>{getProgressInfo(vid.status).indeterminate ? "⏳" : `${getProgressInfo(vid.status).percent}%`}</span>
                           </div>
                           <div style={{ width: "100%", height: "4px", backgroundColor: "rgba(255, 255, 255, 0.1)", borderRadius: "2px", overflow: "hidden" }}>
-                            <div style={{ width: `${getProgressInfo(vid.status).percent}%`, height: "100%", backgroundColor: getProgressInfo(vid.status).color, transition: "width 0.3s ease" }} />
+                            <ProgressBar percent={getProgressInfo(vid.status).percent} color={getProgressInfo(vid.status).color} indeterminate={getProgressInfo(vid.status).indeterminate} />
                           </div>
                         </div>
                       )}
@@ -539,10 +563,10 @@ export default function App() {
                         <div style={{ width: "80%", marginTop: "1.5rem" }}>
                           <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.75rem", color: "hsl(var(--text-muted))", marginBottom: "0.5rem" }}>
                             <span>Progress</span>
-                            <span>{getProgressInfo(selectedVideo.status).percent}%</span>
+                            <span>{getProgressInfo(selectedVideo.status).indeterminate ? "Rendering..." : `${getProgressInfo(selectedVideo.status).percent}%`}</span>
                           </div>
                           <div style={{ width: "100%", height: "6px", backgroundColor: "rgba(255, 255, 255, 0.1)", borderRadius: "3px", overflow: "hidden" }}>
-                            <div style={{ width: `${getProgressInfo(selectedVideo.status).percent}%`, height: "100%", backgroundColor: getProgressInfo(selectedVideo.status).color, transition: "width 0.3s ease" }} />
+                            <ProgressBar percent={getProgressInfo(selectedVideo.status).percent} color={getProgressInfo(selectedVideo.status).color} indeterminate={getProgressInfo(selectedVideo.status).indeterminate} />
                           </div>
                         </div>
                       </div>

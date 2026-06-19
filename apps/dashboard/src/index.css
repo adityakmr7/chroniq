@@ -523,3 +523,8 @@ body {
     transform: rotate(360deg);
   }
 }
+
+@keyframes shimmer {
+  0%   { left: -60%; }
+  100% { left: 110%; }
+}

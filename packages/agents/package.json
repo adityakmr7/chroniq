@@ -5,6 +5,16 @@
   "main": "src/index.ts",
   "types": "src/index.ts",
   "dependencies": {
-    "@types/bun": "latest"
+    "@types/bun": "latest",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "remotion": "4.0.125",
+    "@remotion/renderer": "4.0.125",
+    "@remotion/bundler": "4.0.125",
+    "@remotion/transitions": "4.0.125"
+  },
+  "devDependencies": {
+    "@types/react": "^18.2.0",
+    "@types/react-dom": "^18.2.0"
   }
 }
