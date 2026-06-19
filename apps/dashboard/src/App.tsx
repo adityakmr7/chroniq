@@ -460,7 +460,7 @@ export default function App() {
   const [title, setTitle] = useState("");
   const [topic, setTopic] = useState("Technology History");
   const [videoType, setVideoType] = useState("short");
-  const [mock, setMock] = useState(true);
+  const [mock, setMock] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   // New voice states for video creator
@@ -478,6 +478,10 @@ export default function App() {
   const [reviewVideo, setReviewVideo] = useState<Video | null>(null);
   const [reviewDetails, setReviewDetails] = useState<{ video: Video; script: VideoScript | null; assets: VideoAsset[] } | null>(null);
 
+  // Trending states
+  const [trendingTopics, setTrendingTopics] = useState<any[]>([]);
+  const [isLoadingTrending, setIsLoadingTrending] = useState(false);
+
   const fetchVideos = useCallback(async () => {
     try {
       const res = await fetch(`${API_BASE}/api/videos`);
@@ -492,9 +496,25 @@ export default function App() {
     } catch {}
   }, []);
 
+  const fetchTrendingTopics = useCallback(async () => {
+    setIsLoadingTrending(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/trending-topics`);
+      if (res.ok) {
+        const data = await res.json();
+        setTrendingTopics(data || []);
+      }
+    } catch (err) {
+      console.error("Failed to fetch trending topics:", err);
+    } finally {
+      setIsLoadingTrending(false);
+    }
+  }, []);
+
   useEffect(() => {
     fetchVideos();
     fetchQueueStats();
+    fetchTrendingTopics();
     const interval = setInterval(() => { fetchVideos(); fetchQueueStats(); }, 4000);
     return () => clearInterval(interval);
   }, []);
@@ -506,6 +526,70 @@ export default function App() {
       .then((data) => setVoiceCatalog(data))
       .catch(() => {});
   }, []);
+
+  const handleDeleteVideo = async (id: string, videoTitle: string) => {
+    if (!window.confirm(`Are you sure you want to delete "${videoTitle}"? This will permanently delete the database record and all associated files.`)) {
+      return;
+    }
+    try {
+      const res = await fetch(`${API_BASE}/api/videos/${id}`, { method: "DELETE" });
+      if (res.ok) {
+        setVideos((prev) => prev.filter((vid) => vid.id !== id));
+        if (selectedVideo?.id === id) {
+          setSelectedVideo(null);
+        }
+        if (reviewVideo?.id === id) {
+          setReviewVideo(null);
+        }
+        alert("Video deleted successfully.");
+      } else {
+        const data = await res.json();
+        alert(`Delete failed: ${data.error || "Unknown error"}`);
+      }
+    } catch (err: any) {
+      alert(`Delete error: ${err.message}`);
+    }
+  };
+
+  const handleDownloadVideo = async (vid: Video) => {
+    const slug = slugify(vid.title);
+    const videoUrl = `${API_BASE}/assets/${slug}/final.mp4`;
+    try {
+      const response = await fetch(videoUrl);
+      if (!response.ok) throw new Error("Failed to fetch video file from asset server.");
+      
+      const blob = await response.blob();
+      
+      if ('showSaveFilePicker' in window) {
+        const handle = await (window as any).showSaveFilePicker({
+          suggestedName: `${slug}.mp4`,
+          types: [{
+            description: 'Video File',
+            accept: { 'video/mp4': ['.mp4'] },
+          }],
+        });
+        const writable = await handle.createWritable();
+        await writable.write(blob);
+        await writable.close();
+        alert("Video saved successfully to your chosen folder!");
+      } else {
+        // Fallback for browsers not supporting File System Access API
+        const link = document.createElement("a");
+        link.href = videoUrl;
+        link.download = `${slug}.mp4`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+      }
+    } catch (err: any) {
+      if (err.name === 'AbortError') {
+        // User cancelled the file picker
+        return;
+      }
+      console.error("Download failed:", err);
+      alert(`Download failed: ${err.message}`);
+    }
+  };
 
   // Helper to filter voices based on provider & language
   const getMatchingVoices = (provider: string, lang: string) => {
@@ -653,6 +737,80 @@ export default function App() {
         </div>
       </section>
 
+      {/* ── Daily Trending Topics ── */}
+      <section className="panel" style={{ marginBottom: "1.5rem" }}>
+        <h2 className="panel-title" style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+          🔥 Daily Viral Recommendations
+          <span style={{ fontSize: "0.8rem", fontWeight: 500, color: "hsl(var(--text-muted))" }}>
+            (Today's Trending Ideas — click to create)
+          </span>
+        </h2>
+        {isLoadingTrending ? (
+          <div style={{ display: "flex", gap: "1rem", overflowX: "auto", padding: "0.5rem 0" }}>
+            {[1, 2, 3, 4, 5].map((i) => (
+              <div key={i} className="trending-card-skeleton" style={{ flex: "0 0 250px", height: "130px", background: "rgba(255,255,255,0.03)", borderRadius: "8px", border: "1px solid rgba(255,255,255,0.05)", animation: "shimmer 1.5s infinite" }} />
+            ))}
+          </div>
+        ) : trendingTopics.length === 0 ? (
+          <div style={{ padding: "1.5rem", textAlign: "center", color: "hsl(var(--text-muted))", background: "rgba(255,255,255,0.02)", borderRadius: "8px" }}>
+            No trending topics generated for today.
+          </div>
+        ) : (
+          <div style={{ display: "flex", gap: "1.25rem", overflowX: "auto", padding: "0.5rem 0", scrollbarWidth: "thin" }}>
+            {trendingTopics.map((item, idx) => (
+              <div
+                key={idx}
+                className="trending-card"
+                onClick={() => {
+                  setTitle(item.title);
+                  setTopic(item.category);
+                  document.querySelector("aside.panel")?.scrollIntoView({ behavior: "smooth" });
+                }}
+                style={{
+                  flex: "0 0 280px",
+                  background: "linear-gradient(135deg, rgba(255,255,255,0.03) 0%, rgba(255,255,255,0.01) 100%)",
+                  border: "1px solid hsl(var(--border))",
+                  borderRadius: "10px",
+                  padding: "1rem",
+                  cursor: "pointer",
+                  transition: "all 0.2s ease",
+                  display: "flex",
+                  flexDirection: "column",
+                  justifyContent: "space-between",
+                  gap: "0.5rem"
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.borderColor = "hsl(var(--accent-purple))";
+                  e.currentTarget.style.transform = "translateY(-2px)";
+                  e.currentTarget.style.background = "linear-gradient(135deg, rgba(168,85,247,0.08) 0%, rgba(255,255,255,0.01) 100%)";
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.borderColor = "hsl(var(--border))";
+                  e.currentTarget.style.transform = "translateY(0)";
+                  e.currentTarget.style.background = "linear-gradient(135deg, rgba(255,255,255,0.03) 0%, rgba(255,255,255,0.01) 100%)";
+                }}
+              >
+                <div>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "0.25rem" }}>
+                    <span style={{ fontSize: "0.7rem", fontWeight: 700, color: "hsl(var(--accent-purple))", textTransform: "uppercase" }}>{item.category}</span>
+                    <span style={{ fontSize: "0.7rem", fontWeight: 700, color: "hsl(var(--accent-green))", background: "rgba(34,197,94,0.1)", padding: "0.1rem 0.3rem", borderRadius: "4px" }}>
+                      📈 {item.estimatedViews >= 1000 ? `${(item.estimatedViews/1000).toFixed(0)}k proj` : `${item.estimatedViews} proj`}
+                    </span>
+                  </div>
+                  <h4 style={{ fontSize: "0.875rem", fontWeight: 700, margin: "0.25rem 0", color: "#fff", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden", textOverflow: "ellipsis", lineHeight: 1.3 }}>{item.title}</h4>
+                  <p style={{ fontSize: "0.75rem", color: "hsl(var(--text-muted))", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden", textOverflow: "ellipsis", margin: 0, lineHeight: 1.4 }}>{item.angle}</p>
+                </div>
+                {item.reason && (
+                  <div style={{ fontSize: "0.68rem", color: "rgba(255,255,255,0.45)", borderTop: "1px solid rgba(255,255,255,0.05)", paddingTop: "0.4rem", marginTop: "0.25rem", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                    💡 {item.reason}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+
       {/* ── Main Panel ── */}
       <div className="panel-grid">
         {/* Creator Panel */}
@@ -722,10 +880,7 @@ export default function App() {
               👀 <strong style={{ color: "#f97316" }}>Human-in-the-Loop enabled.</strong> The pipeline will pause after generation for your review before rendering begins.
             </div>
 
-            <div className="checkbox-group">
-              <input type="checkbox" id="mockMode" checked={mock} onChange={(e) => setMock(e.target.checked)} />
-              <label htmlFor="mockMode">Run in MOCK Mode (Fast, free test run)</label>
-            </div>
+
             <button type="submit" className="btn" disabled={isSubmitting || !title.trim()}>
               {isSubmitting ? "Queueing..." : "⚡ Queue Video Job"}
             </button>
@@ -762,6 +917,35 @@ export default function App() {
                     style={isAwaiting ? { outline: "2px solid rgba(249,115,22,0.6)", boxShadow: "0 0 20px rgba(249,115,22,0.15)" } : {}}
                   >
                     <div className="card-thumbnail">
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleDeleteVideo(vid.id, vid.title);
+                        }}
+                        style={{
+                          position: "absolute",
+                          top: "0.75rem",
+                          left: "0.75rem",
+                          background: "rgba(239, 68, 68, 0.85)",
+                          border: "none",
+                          color: "white",
+                          width: "28px",
+                          height: "28px",
+                          borderRadius: "6px",
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          cursor: "pointer",
+                          transition: "all 0.2s",
+                          zIndex: 10,
+                          fontSize: "0.9rem"
+                        }}
+                        onMouseEnter={(e) => (e.currentTarget.style.background = "rgb(239, 68, 68)")}
+                        onMouseLeave={(e) => (e.currentTarget.style.background = "rgba(239, 68, 68, 0.85)")}
+                        title="Delete Video"
+                      >
+                        🗑️
+                      </button>
                       {thumbnailUrl ? (
                         <img src={thumbnailUrl} alt={vid.title} />
                       ) : (
@@ -907,7 +1091,43 @@ export default function App() {
               <div style={{ padding: "4rem", textAlign: "center", color: "hsl(var(--text-muted))" }}>Could not load details.</div>
             )}
 
-            <div style={{ borderTop: "1px solid hsl(var(--border))", padding: "1.25rem 2rem", display: "flex", justifyContent: "flex-end" }}>
+            <div style={{ borderTop: "1px solid hsl(var(--border))", padding: "1.25rem 2rem", display: "flex", justifyContent: "flex-end", gap: "0.75rem" }}>
+              <button
+                className="btn btn-danger"
+                onClick={() => handleDeleteVideo(selectedVideo.id, selectedVideo.title)}
+                style={{
+                  marginRight: "auto",
+                  backgroundColor: "rgb(239, 68, 68)",
+                  borderColor: "rgb(239, 68, 68)",
+                  color: "#fff",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "0.25rem",
+                  padding: "0.5rem 1rem",
+                  borderRadius: "6px",
+                  fontWeight: 600,
+                  cursor: "pointer"
+                }}
+              >
+                🗑️ Delete Video
+              </button>
+              {selectedVideo.status === "completed" && (
+                <button
+                  className="btn btn-primary"
+                  onClick={() => handleDownloadVideo(selectedVideo)}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "0.25rem",
+                    padding: "0.5rem 1rem",
+                    borderRadius: "6px",
+                    fontWeight: 600,
+                    cursor: "pointer"
+                  }}
+                >
+                  📥 Save to Folder
+                </button>
+              )}
               <button className="btn btn-secondary" onClick={() => setSelectedVideo(null)}>Close</button>
             </div>
           </div>

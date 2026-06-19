@@ -1,4 +1,4 @@
-export { generateTopic } from "./topic.ts";
+export { generateTopic, generateDailyTrendingTopics } from "./topic.ts";
 export type { Topic } from "./topic.ts";
 
 export { researchTopic } from "./research.ts";

@@ -9,14 +9,19 @@ import {
   updateScript,
   updateVideoVoiceSettings,
   saveSceneManifest,
+  deleteVideoRecord,
+  getTrendingTopics,
+  saveTrendingTopics,
 } from "@chroniq/db";
 import {
   generateVoice,
   generateASS,
   generateSRT,
   ALL_VOICES,
+  generateDailyTrendingTopics,
 } from "@chroniq/agents";
 import { join } from "node:path";
+import { rm } from "node:fs/promises";
 
 const PORT = parseInt(process.env.PORT || "3000");
 const REDIS_HOST = process.env.REDIS_HOST || "localhost";
@@ -43,6 +48,7 @@ async function startServer() {
 
   Bun.serve({
     port: PORT,
+    idleTimeout: 120, // Allow up to 2 minutes for LLM generation
     async fetch(req) {
       const url = new URL(req.url);
       
@@ -51,7 +57,7 @@ async function startServer() {
         return new Response(null, {
           headers: {
             "Access-Control-Allow-Origin": "*",
-            "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+            "Access-Control-Allow-Methods": "GET, POST, PATCH, DELETE, OPTIONS",
             "Access-Control-Allow-Headers": "Content-Type",
           },
         });
@@ -331,6 +337,49 @@ async function startServer() {
           await Bun.write(filePath, await imageFile.arrayBuffer());
 
           return new Response(JSON.stringify({ success: true, filename }), { headers: corsHeaders });
+        }
+
+        // DELETE /api/videos/:id - delete video and files
+        if (url.pathname.startsWith("/api/videos/") && req.method === "DELETE") {
+          const id = url.pathname.replace("/api/videos/", "");
+          const details = await getVideoDetails(id);
+          if (!details) {
+            return new Response(JSON.stringify({ error: "Video not found" }), { status: 404, headers: corsHeaders });
+          }
+
+          // 1. Delete output files
+          const slug = slugify(details.video.title);
+          const outputDir = join(process.cwd(), "output", slug);
+          try {
+            await rm(outputDir, { recursive: true, force: true });
+            console.log(`🗑️ Deleted output folder for deleted video: ${outputDir}`);
+          } catch (e: any) {
+            console.warn(`⚠️ Warning: could not delete output folder: ${e.message}`);
+          }
+
+          // 2. Delete database record
+          await deleteVideoRecord(id);
+          return new Response(JSON.stringify({ success: true }), { headers: corsHeaders });
+        }
+
+        // GET /api/trending-topics - get daily trending topics
+        if (url.pathname === "/api/trending-topics" && req.method === "GET") {
+          // Format date as YYYY-MM-DD in local time
+          const now = new Date();
+          const offset = now.getTimezoneOffset();
+          const localDate = new Date(now.getTime() - (offset * 60 * 1000));
+          const dateStr = localDate.toISOString().split('T')[0];
+
+          console.log(`🔥 Fetching trending topics for date: ${dateStr}`);
+          let topics = await getTrendingTopics(dateStr);
+          if (!topics || topics.length === 0) {
+            console.log(`🔥 No cached topics for ${dateStr}. Generating new ones...`);
+            topics = await generateDailyTrendingTopics(dateStr);
+            if (topics && topics.length > 0) {
+              await saveTrendingTopics(dateStr, topics);
+            }
+          }
+          return new Response(JSON.stringify(topics), { headers: corsHeaders });
         }
 
         // 5. GET /api/queue-stats - get BullMQ queue metrics

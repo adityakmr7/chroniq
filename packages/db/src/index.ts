@@ -80,6 +80,15 @@ export async function initDatabase() {
   await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS voice_id TEXT;`;
   await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS language TEXT DEFAULT 'en';`;
 
+  await sql`
+    CREATE TABLE IF NOT EXISTS trending_topics (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      date DATE UNIQUE NOT NULL DEFAULT CURRENT_DATE,
+      topics TEXT NOT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL
+    );
+  `;
+
   console.log("✅ Database schema initialized successfully.");
 }
 
@@ -210,3 +219,25 @@ export async function getVideoDetails(id: string): Promise<{
 
   return { video, script: script || null, assets };
 }
+
+export async function deleteVideoRecord(id: string): Promise<void> {
+  await sql`DELETE FROM videos WHERE id = ${id}`;
+}
+
+export async function getTrendingTopics(date: string): Promise<any[] | null> {
+  const [row] = await sql<{ topics: string }[]>`
+    SELECT topics FROM trending_topics WHERE date = ${date}
+  `;
+  if (!row) return null;
+  return JSON.parse(row.topics);
+}
+
+export async function saveTrendingTopics(date: string, topics: any[]): Promise<void> {
+  const jsonStr = JSON.stringify(topics);
+  await sql`
+    INSERT INTO trending_topics (date, topics)
+    VALUES (${date}, ${jsonStr})
+    ON CONFLICT (date) DO UPDATE SET topics = EXCLUDED.topics
+  `;
+}
+
