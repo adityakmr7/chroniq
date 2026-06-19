@@ -142,12 +142,17 @@ async function processGenerateJob(job: Job) {
       console.log(`   [Job ${job.id}] ✍️  Writing script...`);
       await updateVideoStatus(videoId, "generating_script");
       await job.updateProgress(30);
-      script = await generateScript(topic, research, isShort);
+      script = await generateScript(topic, research, isShort, video.language || "en");
 
       console.log(`   [Job ${job.id}] 🎙️  Synthesizing voice...`);
       await updateVideoStatus(videoId, "generating_voice");
       await job.updateProgress(45);
-      const voiceResult = await generateVoice(script.full, true);
+      const voiceResult = await generateVoice(
+        script.full,
+        true,
+        video.tts_provider || undefined,
+        video.voice_id || undefined
+      );
       audioData = voiceResult.audioBuffer;
       alignments = voiceResult.alignments || [];
       totalDuration = alignments.length > 0 ? alignments[alignments.length - 1].end : 30.0;

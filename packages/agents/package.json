@@ -11,7 +11,8 @@
     "remotion": "4.0.125",
     "@remotion/renderer": "4.0.125",
     "@remotion/bundler": "4.0.125",
-    "@remotion/transitions": "4.0.125"
+    "@remotion/transitions": "4.0.125",
+    "edge-tts": "^1.0.1"
   },
   "devDependencies": {
     "@types/react": "^18.2.0",

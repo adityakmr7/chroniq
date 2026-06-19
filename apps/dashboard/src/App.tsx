@@ -77,15 +77,18 @@ function ProgressBar({ percent, color, indeterminate }: { percent: number; color
 }
 
 // ─── HITL Review Panel ───────────────────────────────────────────────────────
+// ─── HITL Review Panel ───────────────────────────────────────────────────────
 function HitlReviewPanel({
   video,
   details,
+  voiceCatalog,
   onApprove,
   onReject,
   onClose,
 }: {
   video: Video;
   details: { video: Video; script: VideoScript | null; assets: VideoAsset[] } | null;
+  voiceCatalog: any;
   onApprove: () => void;
   onReject: () => void;
   onClose: () => void;
@@ -97,7 +100,44 @@ function HitlReviewPanel({
   const [isApproving, setIsApproving] = useState(false);
   const [isRejecting, setIsRejecting] = useState(false);
 
-  const scenes: SceneManifest[] = video.scene_manifest ? JSON.parse(video.scene_manifest) : [];
+  // New voice states
+  const [language, setLanguage] = useState(video.language || "en");
+  const [ttsProvider, setTtsProvider] = useState(video.tts_provider || "local");
+  const [voiceId, setVoiceId] = useState(video.voice_id || "");
+  const [isRegeneratingVoice, setIsRegeneratingVoice] = useState(false);
+
+  // Cache busters
+  const [audioVersion, setAudioVersion] = useState(0);
+  const [sceneVersion, setSceneVersion] = useState(0);
+
+  const [currentVideo, setCurrentVideo] = useState<Video>(video);
+  const scenes: SceneManifest[] = currentVideo.scene_manifest ? JSON.parse(currentVideo.scene_manifest) : [];
+
+  // Helper to filter voices based on provider & language
+  const getMatchingVoices = (provider: string, lang: string) => {
+    if (!voiceCatalog) return [];
+    const list = voiceCatalog[provider] || [];
+    if (provider === "elevenlabs") return list;
+    return list.filter((v: any) => v.lang === lang);
+  };
+
+  const matchingVoices = getMatchingVoices(ttsProvider, language);
+
+  useEffect(() => {
+    // If language is hindi, local (kokoro) is invalid, automatically switch to edge
+    if (language === "hi" && ttsProvider === "local") {
+      setTtsProvider("edge");
+    }
+  }, [language]);
+
+  useEffect(() => {
+    if (matchingVoices.length > 0) {
+      const exists = matchingVoices.some((v: any) => v.id === voiceId);
+      if (!exists) {
+        setVoiceId(matchingVoices[0].id);
+      }
+    }
+  }, [ttsProvider, language, matchingVoices, voiceId]);
 
   const handleSaveScript = async () => {
     setIsSavingScript(true);
@@ -111,6 +151,56 @@ function HitlReviewPanel({
       setTimeout(() => setScriptSaved(false), 2000);
     } finally {
       setIsSavingScript(false);
+    }
+  };
+
+  const handleRegenerateVoice = async () => {
+    setIsRegeneratingVoice(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/videos/${video.id}/regenerate-voice`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          content: editedScript,
+          ttsProvider,
+          voiceId,
+          language,
+        }),
+      });
+      if (res.ok) {
+        setAudioVersion((prev) => prev + 1);
+        
+        // Fetch updated video details to get the scaled scene durations
+        const detailsRes = await fetch(`${API_BASE}/api/videos/${video.id}`);
+        if (detailsRes.ok) {
+          const latestDetails = await detailsRes.json();
+          setCurrentVideo(latestDetails.video);
+        }
+      }
+    } catch (err) {
+      console.error("Voice regeneration failed:", err);
+    } finally {
+      setIsRegeneratingVoice(false);
+    }
+  };
+
+  const handleImageUpload = async (index: number, e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const formData = new FormData();
+    formData.append("image", file);
+
+    try {
+      const res = await fetch(`${API_BASE}/api/videos/${video.id}/scenes/${index}/image`, {
+        method: "POST",
+        body: formData,
+      });
+      if (res.ok) {
+        setSceneVersion((prev) => prev + 1);
+      }
+    } catch (err) {
+      console.error("Image upload failed:", err);
     }
   };
 
@@ -147,13 +237,13 @@ function HitlReviewPanel({
           </div>
           <h2 style={{ fontSize: "1.4rem", fontWeight: 800, margin: 0 }}>{video.title}</h2>
           <p style={{ fontSize: "0.8rem", color: "hsl(var(--text-muted))", marginTop: "0.25rem" }}>
-            Review the generated script and scene images. Edit if needed, then Approve to begin rendering.
+            Review the generated script and scene images. Edit the script, customize the voice, or upload custom scene images, then Approve to begin rendering.
           </p>
         </div>
 
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0", overflow: "hidden" }}>
 
-          {/* Left: Script Editor */}
+          {/* Left: Script Editor & Voice Controls */}
           <div style={{ padding: "1.5rem", borderRight: "1px solid hsl(var(--border))", display: "flex", flexDirection: "column", gap: "0.75rem" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
               <h3 style={{ fontSize: "0.8rem", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", color: "hsl(var(--text-muted))", margin: 0 }}>
@@ -182,7 +272,7 @@ function HitlReviewPanel({
               onChange={(e) => setEditedScript(e.target.value)}
               style={{
                 flex: 1,
-                minHeight: "280px",
+                minHeight: "180px",
                 background: "rgba(255,255,255,0.04)",
                 border: "1px solid hsl(var(--border))",
                 borderRadius: "10px",
@@ -195,10 +285,76 @@ function HitlReviewPanel({
                 outline: "none",
               }}
             />
+
+            {/* Voice Control Bar */}
+            <div style={{ background: "rgba(255,255,255,0.02)", border: "1px solid hsl(var(--border))", borderRadius: "8px", padding: "0.75rem", display: "flex", flexDirection: "column", gap: "0.5rem" }}>
+              <p style={{ fontSize: "0.72rem", fontWeight: 700, color: "hsl(var(--text-muted))", textTransform: "uppercase", margin: 0 }}>🎙️ Customize Voice & Narration</p>
+              
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "0.5rem" }}>
+                <div>
+                  <label style={{ fontSize: "0.65rem", color: "hsl(var(--text-muted))", display: "block", marginBottom: "0.2rem" }}>Language</label>
+                  <select 
+                    value={language} 
+                    onChange={(e) => setLanguage(e.target.value)}
+                    style={{ width: "100%", background: "rgba(0,0,0,0.3)", color: "#fff", border: "1px solid hsl(var(--border))", borderRadius: "4px", padding: "0.25rem", fontSize: "0.75rem", outline: "none" }}
+                  >
+                    <option value="en">English</option>
+                    <option value="hi">Hindi</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label style={{ fontSize: "0.65rem", color: "hsl(var(--text-muted))", display: "block", marginBottom: "0.2rem" }}>TTS Engine</label>
+                  <select 
+                    value={ttsProvider} 
+                    onChange={(e) => setTtsProvider(e.target.value)}
+                    style={{ width: "100%", background: "rgba(0,0,0,0.3)", color: "#fff", border: "1px solid hsl(var(--border))", borderRadius: "4px", padding: "0.25rem", fontSize: "0.75rem", outline: "none" }}
+                  >
+                    {language === "en" && <option value="local">Kokoro (Local)</option>}
+                    <option value="edge">Edge TTS (Free)</option>
+                    <option value="elevenlabs">ElevenLabs (Cloud)</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label style={{ fontSize: "0.65rem", color: "hsl(var(--text-muted))", display: "block", marginBottom: "0.2rem" }}>Voice</label>
+                  <select 
+                    value={voiceId} 
+                    onChange={(e) => setVoiceId(e.target.value)}
+                    style={{ width: "100%", background: "rgba(0,0,0,0.3)", color: "#fff", border: "1px solid hsl(var(--border))", borderRadius: "4px", padding: "0.25rem", fontSize: "0.75rem", outline: "none" }}
+                  >
+                    {matchingVoices.map((v: any) => (
+                      <option key={v.id} value={v.id}>{v.label}</option>
+                    ))}
+                    {matchingVoices.length === 0 && <option value="">No voices available</option>}
+                  </select>
+                </div>
+              </div>
+
+              <button
+                onClick={handleRegenerateVoice}
+                disabled={isRegeneratingVoice}
+                style={{
+                  width: "100%",
+                  padding: "0.4rem",
+                  fontSize: "0.72rem",
+                  fontWeight: 700,
+                  borderRadius: "6px",
+                  border: "none",
+                  background: isRegeneratingVoice ? "#6b7280" : "linear-gradient(135deg, hsl(var(--accent-purple)), #6366f1)",
+                  color: "#fff",
+                  cursor: "pointer",
+                  transition: "opacity 0.2s",
+                }}
+              >
+                {isRegeneratingVoice ? "⏳ Regenerating Voice & Captions..." : "🎙️ Regenerate Voice & Captions"}
+              </button>
+            </div>
+
             {/* Audio preview */}
             <div>
               <p style={{ fontSize: "0.72rem", fontWeight: 700, color: "hsl(var(--text-muted))", textTransform: "uppercase", marginBottom: "0.4rem" }}>🎙️ Narration Audio Preview</p>
-              <audio src={`${API_BASE}/assets/${slug}/narration.mp3`} controls style={{ width: "100%", height: "32px" }} />
+              <audio src={`${API_BASE}/assets/${slug}/narration.mp3?v=${audioVersion}`} controls style={{ width: "100%", height: "32px" }} />
             </div>
           </div>
 
@@ -211,14 +367,36 @@ function HitlReviewPanel({
               {scenes.map((scene) => (
                 <div key={scene.index} style={{ borderRadius: "8px", overflow: "hidden", border: "1px solid hsl(var(--border))", background: "rgba(0,0,0,0.3)" }}>
                   <img
-                    src={`${API_BASE}/assets/${slug}/${scene.filename}`}
+                    src={`${API_BASE}/assets/${slug}/${scene.filename}?v=${sceneVersion}`}
                     alt={`Scene ${scene.index}`}
                     style={{ width: "100%", aspectRatio: video.video_type === "long" ? "16/9" : "9/16", objectFit: "cover", display: "block" }}
                     onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
                   />
                   <div style={{ padding: "0.5rem 0.6rem" }}>
                     <p style={{ fontSize: "0.65rem", fontWeight: 700, color: "#f97316", margin: "0 0 0.2rem" }}>Scene {scene.index + 1} · {scene.duration.toFixed(1)}s</p>
-                    <p style={{ fontSize: "0.65rem", color: "hsl(var(--text-muted))", margin: 0, lineHeight: 1.4 }}>{scene.imagePrompt}</p>
+                    <p style={{ fontSize: "0.65rem", color: "hsl(var(--text-muted))", margin: "0 0 0.4rem 0", lineHeight: 1.4 }}>{scene.imagePrompt}</p>
+                    <label style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: "0.3rem",
+                      padding: "0.25rem 0.6rem",
+                      fontSize: "0.65rem",
+                      fontWeight: 700,
+                      borderRadius: "4px",
+                      background: "rgba(255,255,255,0.08)",
+                      border: "1px solid hsl(var(--border))",
+                      color: "hsl(var(--text))",
+                      cursor: "pointer",
+                      transition: "background 0.2s"
+                    }}>
+                      📁 Replace Image
+                      <input 
+                        type="file" 
+                        accept="image/*" 
+                        style={{ display: "none" }} 
+                        onChange={(e) => handleImageUpload(scene.index, e)}
+                      />
+                    </label>
                   </div>
                 </div>
               ))}
@@ -285,6 +463,12 @@ export default function App() {
   const [mock, setMock] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  // New voice states for video creator
+  const [voiceCatalog, setVoiceCatalog] = useState<any>(null);
+  const [language, setLanguage] = useState("en");
+  const [ttsProvider, setTtsProvider] = useState("local");
+  const [voiceId, setVoiceId] = useState("");
+
   // Modal states
   const [selectedVideo, setSelectedVideo] = useState<Video | null>(null);
   const [videoDetails, setVideoDetails] = useState<{ video: Video; script: VideoScript | null; assets: VideoAsset[] } | null>(null);
@@ -314,6 +498,40 @@ export default function App() {
     const interval = setInterval(() => { fetchVideos(); fetchQueueStats(); }, 4000);
     return () => clearInterval(interval);
   }, []);
+
+  // Fetch Voice catalog
+  useEffect(() => {
+    fetch(`${API_BASE}/api/voices`)
+      .then((res) => res.json())
+      .then((data) => setVoiceCatalog(data))
+      .catch(() => {});
+  }, []);
+
+  // Helper to filter voices based on provider & language
+  const getMatchingVoices = (provider: string, lang: string) => {
+    if (!voiceCatalog) return [];
+    const list = voiceCatalog[provider] || [];
+    if (provider === "elevenlabs") return list;
+    return list.filter((v: any) => v.lang === lang);
+  };
+
+  const matchingVoices = getMatchingVoices(ttsProvider, language);
+
+  useEffect(() => {
+    // If language is hindi, local (kokoro) is invalid, automatically switch to edge
+    if (language === "hi" && ttsProvider === "local") {
+      setTtsProvider("edge");
+    }
+  }, [language]);
+
+  useEffect(() => {
+    if (matchingVoices.length > 0) {
+      const exists = matchingVoices.some((v: any) => v.id === voiceId);
+      if (!exists) {
+        setVoiceId(matchingVoices[0].id);
+      }
+    }
+  }, [ttsProvider, language, matchingVoices, voiceId]);
 
   useEffect(() => {
     if (!selectedVideo) { setVideoDetails(null); return; }
@@ -346,7 +564,15 @@ export default function App() {
       const res = await fetch(`${API_BASE}/api/videos`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ title: title.trim(), topic, mock, videoType }),
+        body: JSON.stringify({
+          title: title.trim(),
+          topic,
+          mock,
+          videoType,
+          ttsProvider,
+          voiceId,
+          language,
+        }),
       });
       if (res.ok) { setTitle(""); fetchVideos(); fetchQueueStats(); }
     } finally { setIsSubmitting(false); }
@@ -461,6 +687,36 @@ export default function App() {
               <input type="text" className="input-text" placeholder="e.g. Why Nokia Lost Everything" value={title} onChange={(e) => setTitle(e.target.value)} required />
             </div>
 
+            {/* Language Selection */}
+            <div className="form-group">
+              <label>Narration Language</label>
+              <select className="select-input" value={language} onChange={(e) => setLanguage(e.target.value)}>
+                <option value="en">English</option>
+                <option value="hi">Hindi</option>
+              </select>
+            </div>
+
+            {/* TTS Provider Selection */}
+            <div className="form-group">
+              <label>Text-To-Speech Engine</label>
+              <select className="select-input" value={ttsProvider} onChange={(e) => setTtsProvider(e.target.value)}>
+                {language === "en" && <option value="local">Kokoro (Local, Free)</option>}
+                <option value="edge">Edge TTS (Azure, Free)</option>
+                <option value="elevenlabs">ElevenLabs (Cloud, Paid)</option>
+              </select>
+            </div>
+
+            {/* Voice Selection */}
+            <div className="form-group">
+              <label>Select Narrator Voice</label>
+              <select className="select-input" value={voiceId} onChange={(e) => setVoiceId(e.target.value)}>
+                {matchingVoices.map((v: any) => (
+                  <option key={v.id} value={v.id}>{v.label}</option>
+                ))}
+                {matchingVoices.length === 0 && <option value="">No voices available</option>}
+              </select>
+            </div>
+
             {/* HITL info box */}
             <div style={{ padding: "0.75rem", background: "rgba(249,115,22,0.08)", border: "1px solid rgba(249,115,22,0.2)", borderRadius: "8px", fontSize: "0.75rem", color: "hsl(var(--text-muted))", lineHeight: 1.5 }}>
               👀 <strong style={{ color: "#f97316" }}>Human-in-the-Loop enabled.</strong> The pipeline will pause after generation for your review before rendering begins.
@@ -560,6 +816,7 @@ export default function App() {
         <HitlReviewPanel
           video={reviewVideo}
           details={reviewDetails}
+          voiceCatalog={voiceCatalog}
           onApprove={() => { setReviewVideo(null); fetchVideos(); }}
           onReject={() => { setReviewVideo(null); fetchVideos(); }}
           onClose={() => setReviewVideo(null)}

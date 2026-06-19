@@ -4,6 +4,7 @@
   "type": "module",
   "dependencies": {
     "@chroniq/db": "workspace:*",
+    "@chroniq/agents": "workspace:*",
     "bullmq": "^5.8.1",
     "ioredis": "^5.4.1"
   }

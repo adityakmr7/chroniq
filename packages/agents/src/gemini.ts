@@ -1,8 +1,21 @@
 const MODEL = "gemini-2.5-flash";
 const ENDPOINT = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent`;
 
-export async function gemini(prompt: string, opts?: { json?: boolean }): Promise<string> {
-  const provider = process.env.LLM_PROVIDER || "cloud";
+export async function gemini(prompt: string, opts?: { json?: boolean; language?: string }): Promise<string> {
+  let provider = process.env.LLM_PROVIDER || "cloud";
+
+  // Force cloud (Gemini) for non-English content to prevent small local models
+  // like Llama 3.2 from outputting corrupted Unicode characters and gibberish scripts.
+  const hasDevanagari = /[\u0900-\u097F]/.test(prompt);
+  const isHindiRequest = prompt.includes("Language: Hindi") || prompt.includes("Devanagari") || prompt.includes("नमस्ते");
+
+  if (opts?.language && opts.language !== "en") {
+    provider = "cloud";
+    console.log(`     🤖 Non-English language "${opts.language}" detected. Forcing cloud LLM (Gemini)...`);
+  } else if (hasDevanagari || isHindiRequest) {
+    provider = "cloud";
+    console.log(`     🤖 Hindi content/Devanagari script detected in prompt. Forcing cloud LLM (Gemini)...`);
+  }
 
   if (provider === "local") {
     const url = process.env.OLLAMA_URL || "http://localhost:11434";
@@ -45,25 +58,27 @@ export async function gemini(prompt: string, opts?: { json?: boolean }): Promise
         }),
       });
 
-      if (res.status === 429) {
+      if (res.status === 429 || res.status === 503) {
         attempt++;
         if (attempt >= maxRetries) break;
 
-        let delayMs = 30000; // default 30s
+        let delayMs = res.status === 503 ? 3000 : 30000; // default 3s for 503, 30s for 429
         try {
-          const errBody = await res.clone().json() as any;
-          // Look for RetryInfo detail block
-          const retryInfo = errBody?.error?.details?.find((d: any) => d["@type"]?.includes("RetryInfo") || d.retryDelay);
-          const retryDelayStr = retryInfo?.retryDelay;
-          if (retryDelayStr) {
-            const seconds = parseFloat(retryDelayStr.replace("s", ""));
-            if (!isNaN(seconds)) {
-              delayMs = Math.ceil(seconds * 1000) + 1500; // Add 1.5s safety buffer
+          if (res.status === 429) {
+            const errBody = await res.clone().json() as any;
+            // Look for RetryInfo detail block
+            const retryInfo = errBody?.error?.details?.find((d: any) => d["@type"]?.includes("RetryInfo") || d.retryDelay);
+            const retryDelayStr = retryInfo?.retryDelay;
+            if (retryDelayStr) {
+              const seconds = parseFloat(retryDelayStr.replace("s", ""));
+              if (!isNaN(seconds)) {
+                delayMs = Math.ceil(seconds * 1000) + 1500; // Add 1.5s safety buffer
+              }
             }
           }
         } catch (_) {}
 
-        console.warn(`     ⚠️ Gemini API rate limited (429). Retrying in ${(delayMs / 1000).toFixed(1)}s... (Attempt ${attempt}/${maxRetries})`);
+        console.warn(`     ⚠️ Gemini API returned ${res.status}. Retrying in ${(delayMs / 1000).toFixed(1)}s... (Attempt ${attempt}/${maxRetries})`);
         await new Promise((resolve) => setTimeout(resolve, delayMs));
         continue;
       }

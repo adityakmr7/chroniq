@@ -7,7 +7,15 @@ import {
   approveVideo,
   rejectVideo,
   updateScript,
+  updateVideoVoiceSettings,
+  saveSceneManifest,
 } from "@chroniq/db";
+import {
+  generateVoice,
+  generateASS,
+  generateSRT,
+  ALL_VOICES,
+} from "@chroniq/agents";
 import { join } from "node:path";
 
 const PORT = parseInt(process.env.PORT || "3000");
@@ -21,6 +29,13 @@ const videoQueue = new Queue("video-generation", {
     port: REDIS_PORT,
   },
 });
+
+function slugify(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/(^-|-$)/g, "");
+}
 
 async function startServer() {
   console.log("🚀 Initializing database connection for API...");
@@ -143,6 +158,10 @@ async function startServer() {
             title: string;
             topic: string;
             mock?: boolean;
+            videoType?: string;
+            ttsProvider?: string;
+            voiceId?: string;
+            language?: string;
           };
 
           if (!body.title || !body.topic) {
@@ -154,7 +173,19 @@ async function startServer() {
 
           // Insert video record into database
           const videoType = body.videoType || "short";
-          const video = await createVideo(body.title, body.topic, "queued", videoType);
+          const ttsProvider = body.ttsProvider || "local";
+          const voiceId = body.voiceId || null;
+          const language = body.language || "en";
+          
+          const video = await createVideo(
+            body.title,
+            body.topic,
+            "queued",
+            videoType,
+            ttsProvider,
+            voiceId,
+            language
+          );
 
           // Push job to BullMQ queue
           const job = await videoQueue.add(
@@ -179,6 +210,127 @@ async function startServer() {
             }),
             { status: 201, headers: corsHeaders }
           );
+        }
+
+        // 4d. POST /api/videos/:id/regenerate-voice
+        if (url.pathname.match(/^\/api\/videos\/[^/]+\/regenerate-voice$/) && req.method === "POST") {
+          const id = url.pathname.replace("/api/videos/", "").replace("/regenerate-voice", "");
+          const body = (await req.json()) as {
+            content: string;
+            ttsProvider?: string;
+            voiceId?: string;
+            language?: string;
+          };
+
+          if (!body.content) {
+            return new Response(JSON.stringify({ error: "Missing content" }), { status: 400, headers: corsHeaders });
+          }
+
+          // 1. Update script in DB
+          await updateScript(id, body.content);
+
+          // 2. Fetch video details
+          const details = await getVideoDetails(id);
+          if (!details) {
+            return new Response(JSON.stringify({ error: "Video not found" }), { status: 404, headers: corsHeaders });
+          }
+
+          // 3. Update voice settings if provided
+          const ttsProvider = body.ttsProvider || details.video.tts_provider || "local";
+          const voiceId = body.voiceId !== undefined ? body.voiceId : details.video.voice_id;
+          const language = body.language || details.video.language || "en";
+          await updateVideoVoiceSettings(id, ttsProvider, voiceId, language);
+
+          // 4. Generate new audio + alignments
+          const slug = slugify(details.video.title);
+          console.log(`🎙️ Regenerating voice for video ${id} (${slug})...`);
+          
+          const voiceResult = await generateVoice(
+            body.content,
+            true,
+            ttsProvider,
+            voiceId || undefined
+          );
+
+          const newDuration = voiceResult.alignments && voiceResult.alignments.length > 0 
+            ? voiceResult.alignments[voiceResult.alignments.length - 1].end 
+            : 30.0;
+
+          // 5. Write new audio and alignment files to disk
+          const outputDir = join(process.cwd(), "output", slug);
+          const narrationPath = join(outputDir, "narration.mp3");
+          const alignmentsPath = join(outputDir, "alignments.json");
+
+          await Bun.write(narrationPath, voiceResult.audioBuffer);
+          await Bun.write(alignmentsPath, JSON.stringify(voiceResult.alignments || []));
+
+          // 6. Generate caption files
+          const assContent = generateASS(voiceResult.alignments || []);
+          const srtContent = generateSRT(voiceResult.alignments || []);
+          await Bun.write(join(outputDir, "captions.ass"), assContent);
+          await Bun.write(join(outputDir, "captions.srt"), srtContent);
+
+          // 7. Rescale scenes duration
+          const oldSceneManifest = details.video.scene_manifest 
+            ? JSON.parse(details.video.scene_manifest) 
+            : [];
+
+          if (oldSceneManifest.length > 0) {
+            const oldDuration = oldSceneManifest.reduce((sum: number, s: any) => sum + s.duration, 0) || 30.0;
+            const scaleFactor = newDuration / oldDuration;
+            let sum = 0;
+            
+            for (let i = 0; i < oldSceneManifest.length; i++) {
+              if (i === oldSceneManifest.length - 1) {
+                oldSceneManifest[i].duration = Math.round((newDuration - sum) * 100) / 100;
+              } else {
+                oldSceneManifest[i].duration = Math.round((oldSceneManifest[i].duration * scaleFactor) * 100) / 100;
+                sum += oldSceneManifest[i].duration;
+              }
+            }
+            await saveSceneManifest(id, oldSceneManifest);
+          }
+
+          return new Response(JSON.stringify({
+            success: true,
+            duration: newDuration,
+            ttsProvider,
+            voiceId,
+            language
+          }), { headers: corsHeaders });
+        }
+
+        // 4e. GET /api/voices - get voice catalog
+        if (url.pathname === "/api/voices" && req.method === "GET") {
+          return new Response(JSON.stringify(ALL_VOICES), { headers: corsHeaders });
+        }
+
+        // 4f. POST /api/videos/:id/scenes/:index/image - upload custom image for a scene
+        if (url.pathname.match(/^\/api\/videos\/[^/]+\/scenes\/\d+\/image$/) && req.method === "POST") {
+          const parts = url.pathname.split("/");
+          const id = parts[3];
+          const sceneIndex = parseInt(parts[5]);
+
+          const details = await getVideoDetails(id);
+          if (!details) {
+            return new Response(JSON.stringify({ error: "Video not found" }), { status: 404, headers: corsHeaders });
+          }
+
+          const formData = await req.formData();
+          const imageFile = formData.get("image") as File;
+          if (!imageFile) {
+            return new Response(JSON.stringify({ error: "No image file provided" }), { status: 400, headers: corsHeaders });
+          }
+
+          const slug = slugify(details.video.title);
+          const outputDir = join(process.cwd(), "output", slug);
+          const filename = `scene_${sceneIndex}.jpg`;
+          const filePath = join(outputDir, filename);
+
+          // Write file to output folder
+          await Bun.write(filePath, await imageFile.arrayBuffer());
+
+          return new Response(JSON.stringify({ success: true, filename }), { headers: corsHeaders });
         }
 
         // 5. GET /api/queue-stats - get BullMQ queue metrics

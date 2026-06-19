@@ -12,7 +12,10 @@ export interface Video {
   youtube_url: string | null;
   video_type?: string;
   error_message?: string | null;
-  scene_manifest?: string | null; // JSON string of SceneManifest[]
+  scene_manifest?: string | null;
+  tts_provider?: string | null;  // 'edge' | 'local' | 'cloud'
+  voice_id?: string | null;       // provider-specific voice ID
+  language?: string | null;       // 'en' | 'hi' etc.
   created_at: Date;
 }
 
@@ -72,15 +75,26 @@ export async function initDatabase() {
   // Schema migrations
   await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS video_type TEXT DEFAULT 'short';`;
   await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS error_message TEXT;`;
-  await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS scene_manifest TEXT;`; // JSON array of SceneManifest
+  await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS scene_manifest TEXT;`;
+  await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS tts_provider TEXT DEFAULT 'local';`;
+  await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS voice_id TEXT;`;
+  await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS language TEXT DEFAULT 'en';`;
 
   console.log("✅ Database schema initialized successfully.");
 }
 
-export async function createVideo(title: string, topic: string, status = "queued", videoType = "short"): Promise<Video> {
+export async function createVideo(
+  title: string,
+  topic: string,
+  status = "queued",
+  videoType = "short",
+  ttsProvider = "local",
+  voiceId: string | null = null,
+  language = "en"
+): Promise<Video> {
   const [video] = await sql<Video[]>`
-    INSERT INTO videos (title, topic, status, video_type)
-    VALUES (${title}, ${topic}, ${status}, ${videoType})
+    INSERT INTO videos (title, topic, status, video_type, tts_provider, voice_id, language)
+    VALUES (${title}, ${topic}, ${status}, ${videoType}, ${ttsProvider}, ${voiceId}, ${language})
     RETURNING *
   `;
   return video;
@@ -142,6 +156,24 @@ export async function approveVideo(videoId: string): Promise<Video> {
 }
 
 /** Called from dashboard reject: resets back to draft for re-generation */
+export async function updateVideoVoiceSettings(
+  id: string,
+  ttsProvider: string,
+  voiceId: string | null,
+  language: string
+): Promise<Video> {
+  const [video] = await sql<Video[]>`
+    UPDATE videos
+    SET 
+      tts_provider = ${ttsProvider},
+      voice_id = ${voiceId},
+      language = ${language}
+    WHERE id = ${id}
+    RETURNING *
+  `;
+  return video;
+}
+
 export async function rejectVideo(videoId: string): Promise<Video> {
   const [video] = await sql<Video[]>`
     UPDATE videos SET status = 'queued', scene_manifest = NULL WHERE id = ${videoId} RETURNING *

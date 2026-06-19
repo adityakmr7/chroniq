@@ -7,7 +7,7 @@ export type { Research } from "./research.ts";
 export { generateScript } from "./script.ts";
 export type { Script } from "./script.ts";
 
-export { generateVoice, alignCharactersToWords } from "./voice.ts";
+export { generateVoice, alignCharactersToWords, ALL_VOICES } from "./voice.ts";
 export type { WordAlignment, VoiceGenerationResult } from "./voice.ts";
 
 export { generateScenes, downloadImage } from "./visual.ts";

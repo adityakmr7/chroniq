@@ -10,9 +10,15 @@ export type Script = {
   wordCount: number;
 };
 
-export async function generateScript(topic: Topic, research: Research, isShort = true): Promise<Script> {
+export async function generateScript(topic: Topic, research: Research, isShort = true, language = "en"): Promise<Script> {
+  const languageInstruction = language === "hi" 
+    ? "Write the script in Hindi (using Devanagari script like 'नमस्ते'). Ensure the pronunciation and rhythm are natural for a Hindi voiceover generator."
+    : "Write the script in English.";
+
   const prompt = `You are an elite scriptwriter for faceless documentary YouTube ${isShort ? "Shorts" : "videos"}.
 Write a narration script for this video.
+Language: ${language === "hi" ? "Hindi" : "English"}.
+${languageInstruction}
 
 Topic: "${topic.title}"
 Angle: ${topic.angle}
@@ -30,7 +36,7 @@ Requirements:
 Return ONLY JSON matching:
 {"hook": string, "body": string, "cta": string}`;
 
-  const raw = await gemini(prompt, { json: true });
+  const raw = await gemini(prompt, { json: true, language });
   const parsed = JSON.parse(raw) as { hook: string; body: string; cta: string };
   const full = [parsed.hook, parsed.body, parsed.cta].join("\n\n").trim();
   return {
