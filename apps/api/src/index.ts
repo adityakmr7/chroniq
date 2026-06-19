@@ -4,6 +4,9 @@ import {
   createVideo,
   getVideos,
   getVideoDetails,
+  approveVideo,
+  rejectVideo,
+  updateScript,
 } from "@chroniq/db";
 import { join } from "node:path";
 
@@ -82,7 +85,7 @@ async function startServer() {
         }
 
         // 3. GET /api/videos/:id - details of a single video
-        if (url.pathname.startsWith("/api/videos/") && req.method === "GET") {
+        if (url.pathname.startsWith("/api/videos/") && !url.pathname.includes("/approve") && !url.pathname.includes("/reject") && !url.pathname.includes("/script") && req.method === "GET") {
           const id = url.pathname.replace("/api/videos/", "");
           const details = await getVideoDetails(id);
           if (!details) {
@@ -92,6 +95,46 @@ async function startServer() {
             });
           }
           return new Response(JSON.stringify(details), { headers: corsHeaders });
+        }
+
+        // 4a. POST /api/videos/:id/approve — HITL: approve and queue render job
+        if (url.pathname.match(/^\/api\/videos\/[^/]+\/approve$/) && req.method === "POST") {
+          const id = url.pathname.replace("/api/videos/", "").replace("/approve", "");
+          await approveVideo(id);
+          // Queue the render job
+          await videoQueue.add(
+            "render-video",
+            { videoId: id },
+            { removeOnComplete: true, removeOnFail: false }
+          );
+          return new Response(JSON.stringify({ success: true, status: "approved" }), { headers: corsHeaders });
+        }
+
+        // 4b. POST /api/videos/:id/reject — HITL: reject, reset to queued for re-generation
+        if (url.pathname.match(/^\/api\/videos\/[^/]+\/reject$/) && req.method === "POST") {
+          const id = url.pathname.replace("/api/videos/", "").replace("/reject", "");
+          await rejectVideo(id);
+          // Re-queue generation job
+          const details = await getVideoDetails(id);
+          if (details) {
+            await videoQueue.add(
+              "generate-video",
+              { videoId: id, category: details.video.topic, mock: false, videoType: details.video.video_type || "short" },
+              { removeOnComplete: true, removeOnFail: false }
+            );
+          }
+          return new Response(JSON.stringify({ success: true, status: "queued" }), { headers: corsHeaders });
+        }
+
+        // 4c. PATCH /api/videos/:id/script — update script before render
+        if (url.pathname.match(/^\/api\/videos\/[^/]+\/script$/) && req.method === "PATCH") {
+          const id = url.pathname.replace("/api/videos/", "").replace("/script", "");
+          const body = (await req.json()) as { content: string };
+          if (!body.content) {
+            return new Response(JSON.stringify({ error: "Missing content" }), { status: 400, headers: corsHeaders });
+          }
+          await updateScript(id, body.content);
+          return new Response(JSON.stringify({ success: true }), { headers: corsHeaders });
         }
 
         // 4. POST /api/videos - queue a new video generation

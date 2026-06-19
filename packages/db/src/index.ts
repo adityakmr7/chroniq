@@ -12,6 +12,7 @@ export interface Video {
   youtube_url: string | null;
   video_type?: string;
   error_message?: string | null;
+  scene_manifest?: string | null; // JSON string of SceneManifest[]
   created_at: Date;
 }
 
@@ -28,10 +29,17 @@ export interface VideoAsset {
   url: string;
 }
 
+export interface SceneManifest {
+  index: number;
+  filename: string;
+  duration: number;
+  imagePrompt: string;
+  searchQuery?: string;
+}
+
 export async function initDatabase() {
   console.log("🛠️  Initializing database schema...");
   
-  // Create tables if they do not exist
   await sql`
     CREATE TABLE IF NOT EXISTS videos (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -56,18 +64,15 @@ export async function initDatabase() {
     CREATE TABLE IF NOT EXISTS assets (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
       video_id UUID NOT NULL REFERENCES videos(id) ON DELETE CASCADE,
-      type TEXT NOT NULL, -- 'audio', 'image', 'srt', 'ass', 'video', 'thumbnail'
+      type TEXT NOT NULL,
       url TEXT NOT NULL
     );
   `;
 
-  // Apply schema migration if column doesn't exist
-  await sql`
-    ALTER TABLE videos ADD COLUMN IF NOT EXISTS video_type TEXT DEFAULT 'short';
-  `;
-  await sql`
-    ALTER TABLE videos ADD COLUMN IF NOT EXISTS error_message TEXT;
-  `;
+  // Schema migrations
+  await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS video_type TEXT DEFAULT 'short';`;
+  await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS error_message TEXT;`;
+  await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS scene_manifest TEXT;`; // JSON array of SceneManifest
 
   console.log("✅ Database schema initialized successfully.");
 }
@@ -102,15 +107,46 @@ export async function updateVideoStatus(
 }
 
 export async function saveScript(videoId: string, content: string): Promise<VideoScript> {
-  // Delete existing if any, to keep it 1-to-1
   await sql`DELETE FROM scripts WHERE video_id = ${videoId}`;
-
   const [script] = await sql<VideoScript[]>`
     INSERT INTO scripts (video_id, content)
     VALUES (${videoId}, ${content})
     RETURNING *
   `;
   return script;
+}
+
+export async function updateScript(videoId: string, content: string): Promise<VideoScript> {
+  // Upsert: update if exists, insert if not
+  await sql`DELETE FROM scripts WHERE video_id = ${videoId}`;
+  const [script] = await sql<VideoScript[]>`
+    INSERT INTO scripts (video_id, content)
+    VALUES (${videoId}, ${content})
+    RETURNING *
+  `;
+  return script;
+}
+
+export async function saveSceneManifest(videoId: string, scenes: SceneManifest[]): Promise<void> {
+  await sql`
+    UPDATE videos SET scene_manifest = ${JSON.stringify(scenes)} WHERE id = ${videoId}
+  `;
+}
+
+/** Called from the dashboard: queues the render phase job */
+export async function approveVideo(videoId: string): Promise<Video> {
+  const [video] = await sql<Video[]>`
+    UPDATE videos SET status = 'approved' WHERE id = ${videoId} RETURNING *
+  `;
+  return video;
+}
+
+/** Called from dashboard reject: resets back to draft for re-generation */
+export async function rejectVideo(videoId: string): Promise<Video> {
+  const [video] = await sql<Video[]>`
+    UPDATE videos SET status = 'queued', scene_manifest = NULL WHERE id = ${videoId} RETURNING *
+  `;
+  return video;
 }
 
 export async function addAsset(videoId: string, type: string, url: string): Promise<VideoAsset> {
@@ -134,23 +170,11 @@ export async function getVideoDetails(id: string): Promise<{
   script: VideoScript | null;
   assets: VideoAsset[];
 } | null> {
-  const [video] = await sql<Video[]>`
-    SELECT * FROM videos WHERE id = ${id}
-  `;
-
+  const [video] = await sql<Video[]>`SELECT * FROM videos WHERE id = ${id}`;
   if (!video) return null;
 
-  const [script] = await sql<VideoScript[]>`
-    SELECT * FROM scripts WHERE video_id = ${id}
-  `;
+  const [script] = await sql<VideoScript[]>`SELECT * FROM scripts WHERE video_id = ${id}`;
+  const assets = await sql<VideoAsset[]>`SELECT * FROM assets WHERE video_id = ${id}`;
 
-  const assets = await sql<VideoAsset[]>`
-    SELECT * FROM assets WHERE video_id = ${id}
-  `;
-
-  return {
-    video,
-    script: script || null,
-    assets
-  };
+  return { video, script: script || null, assets };
 }
