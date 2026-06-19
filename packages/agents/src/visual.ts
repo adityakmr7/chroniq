@@ -33,7 +33,7 @@ Rules for Scene Generation:
 1. Divide the video into consecutive scenes.
 2. The first scene must start at timestamp 0.
 3. The sum of all scene durations MUST exactly equal ${totalDuration.toFixed(2)} seconds.
-4. Each scene duration should be between 3.0 and 6.0 seconds.
+4. Each scene duration should be: ${isShort ? "strictly between 1.5 and 2.5 seconds (so there are more cuts and the pacing is extremely fast and engaging)" : "between 3.0 and 6.0 seconds"}.
 5. Provide a detailed, highly cinematic, photographic image prompt (imagePrompt) for each scene. The style should be documentary-style, dramatic, with high contrast. Use descriptive details rather than buzzwords.
 6. The scenes must follow the chronological flow of the script.
 7. The imagePrompts should generate images suited for a ${isShort ? "9:16 vertical" : "16:9 horizontal"} aspect ratio.
@@ -339,11 +339,12 @@ export async function downloadImage(prompt: string, outputPath: string, isShort 
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
           }
         });
-        if (imgRes.ok) {
+        const contentType = imgRes.headers.get("content-type") || "";
+        if (imgRes.ok && contentType.startsWith("image/")) {
           await Bun.write(outputPath, await imgRes.arrayBuffer());
           return;
         } else {
-          console.warn(`     ⚠️ Image download failed with status ${imgRes.status}, falling back to Picsum...`);
+          console.warn(`     ⚠️ Download failed or returned non-image content type "${contentType}" (status ${imgRes.status}), falling back to Picsum...`);
         }
       } catch (err) {
         console.warn(`     ⚠️ Image download failed, falling back to Picsum...`, err);

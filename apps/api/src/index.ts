@@ -243,7 +243,7 @@ async function startServer() {
 
           // 3. Update voice settings if provided
           const ttsProvider = body.ttsProvider || details.video.tts_provider || "local";
-          const voiceId = body.voiceId !== undefined ? body.voiceId : details.video.voice_id;
+          const voiceId = body.voiceId !== undefined ? body.voiceId : (details.video.voice_id ?? null);
           const language = body.language || details.video.language || "en";
           await updateVideoVoiceSettings(id, ttsProvider, voiceId, language);
 

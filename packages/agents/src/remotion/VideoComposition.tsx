@@ -24,6 +24,7 @@ export interface WordAlignment {
 export interface VideoCompositionProps {
   scenes: Scene[];
   audioUrl: string;
+  musicUrl?: string;
   alignments: WordAlignment[];
   isShort: boolean;
 }
@@ -35,6 +36,7 @@ const KB_MODES: KenBurnsMode[] = ["zoom-in", "zoom-out", "pan-left", "pan-right"
 export const VideoComposition: React.FC<VideoCompositionProps> = ({
   scenes,
   audioUrl,
+  musicUrl,
   alignments,
   isShort,
 }) => {
@@ -72,6 +74,7 @@ export const VideoComposition: React.FC<VideoCompositionProps> = ({
 
       {/* ── Background Audio ── */}
       {audioUrl && <Audio src={audioUrl} />}
+      {musicUrl && <Audio src={musicUrl} volume={0.10} loop />}
 
       {/* ── Captions Overlay ── */}
       <AbsoluteFill style={{ pointerEvents: "none" }}>
@@ -149,8 +152,6 @@ const SceneElement: React.FC<{
 // ─────────────────────────────────────────────
 // CaptionsOverlay: Line-by-line with bold highlight
 // ─────────────────────────────────────────────
-const WORDS_PER_LINE = 4;
-
 const CaptionsOverlay: React.FC<{
   alignments: WordAlignment[];
   frame: number;
@@ -159,6 +160,7 @@ const CaptionsOverlay: React.FC<{
 }> = ({ alignments, frame, fps, isShort }) => {
   if (!alignments || alignments.length === 0) return null;
 
+  const WORDS_PER_LINE = isShort ? 2 : 4;
   const currentTime = frame / fps;
 
   // Find the currently active word
@@ -182,20 +184,20 @@ const CaptionsOverlay: React.FC<{
   const lineEnd = Math.min(lineStart + WORDS_PER_LINE, alignments.length);
   const lineWords = alignments.slice(lineStart, lineEnd);
 
-  const fontSize = isShort ? 72 : 52;
+  const fontSize = isShort ? 84 : 52;
 
   return (
     <div
       style={{
         position: "absolute",
-        bottom: isShort ? "28%" : "12%",
+        bottom: isShort ? "42%" : "12%",
         left: "5%",
         right: "5%",
         display: "flex",
         flexWrap: "wrap",
         justifyContent: "center",
         alignItems: "center",
-        gap: isShort ? "10px" : "8px",
+        gap: isShort ? "12px" : "8px",
         padding: "16px 24px",
       }}
     >
@@ -214,12 +216,12 @@ const CaptionsOverlay: React.FC<{
               textTransform: "uppercase",
               letterSpacing: "0.02em",
               display: "inline-block",
-              transform: isActive ? "scale(1.12)" : "scale(1.0)",
+              transform: isActive ? "scale(1.22)" : "scale(1.0)",
               transition: "transform 0.06s ease",
               willChange: "transform",
-              padding: isActive ? "2px 8px" : "2px 4px",
+              padding: isActive ? "2px 10px" : "2px 4px",
               borderRadius: isActive ? "6px" : "0",
-              background: isActive ? "rgba(250,204,21,0.15)" : "transparent",
+              background: isActive ? "rgba(250,204,21,0.18)" : "transparent",
             }}
           >
             {w.word}

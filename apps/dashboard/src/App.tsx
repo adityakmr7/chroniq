@@ -10,6 +10,9 @@ interface Video {
   video_type?: string;
   error_message?: string | null;
   scene_manifest?: string | null;
+  tts_provider?: string | null;
+  voice_id?: string | null;
+  language?: string | null;
   created_at: string;
 }
 

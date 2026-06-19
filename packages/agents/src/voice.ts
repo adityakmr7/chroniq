@@ -263,7 +263,8 @@ async function generateEdgeTTS(text: string, voice: string): Promise<VoiceGenera
       socket.write(req);
     });
     
-    socket.on('data', (data) => {
+    socket.on('data', (chunk) => {
+      const data = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
       if (!handshaked) {
         responseBuffer = Buffer.concat([responseBuffer, data]);
         const idx = responseBuffer.indexOf('\r\n\r\n');

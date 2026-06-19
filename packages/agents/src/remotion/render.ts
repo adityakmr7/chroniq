@@ -95,9 +95,14 @@ export async function renderVideoWithRemotion(
       console.log(`        Total scenes: ${formattedScenes.length}`);
     }
 
+    const musicUrl = existsSync(join(outputRoot, "music", "bg_epic.mp3"))
+      ? `http://localhost:${assetServer.port}/music/bg_epic.mp3`
+      : undefined;
+
     const inputProps = {
       scenes: formattedScenes,
       audioUrl: formattedAudioUrl,
+      musicUrl,
       alignments,
       isShort,
     };
@@ -129,8 +134,8 @@ export async function renderVideoWithRemotion(
           "--disable-dev-shm-usage",
           // NOTE: do NOT add --disable-gpu — it kills the Web Audio API and audio capture
         ],
-      },
-      onProgress: ({ progress }) => {
+      } as any,
+      onProgress: ({ progress }: { progress: number }) => {
         const pct = Math.round(progress * 100);
         if (pct % 10 === 0) {
           console.log(`     ⏳ Render progress: ${pct}%`);

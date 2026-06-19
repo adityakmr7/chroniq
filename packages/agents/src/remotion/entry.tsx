@@ -6,7 +6,7 @@ const Root: React.FC = () => {
   return (
     <Composition
       id="main-video"
-      component={VideoComposition}
+      component={VideoComposition as unknown as React.FC<Record<string, unknown>>}
       durationInFrames={900}
       fps={25}
       width={1080}
