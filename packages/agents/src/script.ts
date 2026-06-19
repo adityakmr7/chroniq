@@ -10,8 +10,8 @@ export type Script = {
   wordCount: number;
 };
 
-export async function generateScript(topic: Topic, research: Research): Promise<Script> {
-  const prompt = `You are an elite scriptwriter for faceless documentary YouTube Shorts.
+export async function generateScript(topic: Topic, research: Research, isShort = true): Promise<Script> {
+  const prompt = `You are an elite scriptwriter for faceless documentary YouTube ${isShort ? "Shorts" : "videos"}.
 Write a narration script for this video.
 
 Topic: "${topic.title}"
@@ -21,7 +21,7 @@ Key facts:
 ${research.facts.map((f) => `- ${f}`).join("\n")}
 
 Requirements:
-- 120-150 words total (this is a Short).
+- ${isShort ? "120-130 words total (strictly under 60 seconds, this is a Short)" : "400-450 words total (this is a 3-minute long-form video)"}.
 - Open with a 1-2 sentence HOOK that creates an immediate curiosity gap.
 - BODY tells the story with retention loops ("but here's the twist...", "what happened next...").
 - End with a short CTA that invites a follow/comment, themed to the story.

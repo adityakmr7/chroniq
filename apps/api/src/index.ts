@@ -110,7 +110,8 @@ async function startServer() {
           }
 
           // Insert video record into database
-          const video = await createVideo(body.title, body.topic, "queued");
+          const videoType = body.videoType || "short";
+          const video = await createVideo(body.title, body.topic, "queued", videoType);
 
           // Push job to BullMQ queue
           const job = await videoQueue.add(
@@ -119,6 +120,7 @@ async function startServer() {
               videoId: video.id,
               category: body.topic,
               mock: body.mock ?? false,
+              videoType: video.video_type || "short",
             },
             {
               removeOnComplete: true,

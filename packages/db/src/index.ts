@@ -10,6 +10,8 @@ export interface Video {
   status: string;
   duration: number | null;
   youtube_url: string | null;
+  video_type?: string;
+  error_message?: string | null;
   created_at: Date;
 }
 
@@ -59,13 +61,21 @@ export async function initDatabase() {
     );
   `;
 
+  // Apply schema migration if column doesn't exist
+  await sql`
+    ALTER TABLE videos ADD COLUMN IF NOT EXISTS video_type TEXT DEFAULT 'short';
+  `;
+  await sql`
+    ALTER TABLE videos ADD COLUMN IF NOT EXISTS error_message TEXT;
+  `;
+
   console.log("✅ Database schema initialized successfully.");
 }
 
-export async function createVideo(title: string, topic: string, status = "queued"): Promise<Video> {
+export async function createVideo(title: string, topic: string, status = "queued", videoType = "short"): Promise<Video> {
   const [video] = await sql<Video[]>`
-    INSERT INTO videos (title, topic, status)
-    VALUES (${title}, ${topic}, ${status})
+    INSERT INTO videos (title, topic, status, video_type)
+    VALUES (${title}, ${topic}, ${status}, ${videoType})
     RETURNING *
   `;
   return video;
@@ -75,14 +85,16 @@ export async function updateVideoStatus(
   id: string,
   status: string,
   duration?: number,
-  youtubeUrl?: string
+  youtubeUrl?: string,
+  errorMessage?: string
 ): Promise<Video> {
   const [video] = await sql<Video[]>`
     UPDATE videos
     SET 
       status = ${status},
       duration = COALESCE(${duration ?? null}, duration),
-      youtube_url = COALESCE(${youtubeUrl ?? null}, youtube_url)
+      youtube_url = COALESCE(${youtubeUrl ?? null}, youtube_url),
+      error_message = ${status === "failed" ? (errorMessage || "Unknown error") : null}
     WHERE id = ${id}
     RETURNING *
   `;

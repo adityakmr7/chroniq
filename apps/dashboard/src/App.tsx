@@ -7,6 +7,8 @@ interface Video {
   status: string;
   duration: string | null;
   youtube_url: string | null;
+  video_type?: string;
+  error_message?: string | null;
   created_at: string;
 }
 
@@ -39,6 +41,29 @@ function slugify(text: string): string {
     .replace(/(^-|-$)/g, "");
 }
 
+function getProgressInfo(status: string) {
+  switch (status) {
+    case "queued":
+      return { percent: 5, label: "Waiting in queue...", color: "#3b82f6" };
+    case "researching":
+      return { percent: 20, label: "🔍 Researching topic details...", color: "#a855f7" };
+    case "generating_script":
+      return { percent: 40, label: "✍️ Writing script content...", color: "#ec4899" };
+    case "generating_voice":
+      return { percent: 60, label: "🎙️ Generating voiceover narration...", color: "#f59e0b" };
+    case "generating_visuals":
+      return { percent: 75, label: "🎨 Generating dynamic image scenes...", color: "#06b6d4" };
+    case "rendering_video":
+      return { percent: 90, label: "🎥 Rendering final video via FFmpeg...", color: "#10b981" };
+    case "completed":
+      return { percent: 100, label: "✅ Generation completed!", color: "#22c55e" };
+    case "failed":
+      return { percent: 100, label: "❌ Generation failed", color: "#ef4444" };
+    default:
+      return { percent: 0, label: "Unknown status", color: "#6b7280" };
+  }
+}
+
 export default function App() {
   const [videos, setVideos] = useState<Video[]>([]);
   const [queueStats, setQueueStats] = useState<QueueStats>({
@@ -51,6 +76,7 @@ export default function App() {
   // Form states
   const [title, setTitle] = useState("");
   const [topic, setTopic] = useState("Technology History");
+  const [videoType, setVideoType] = useState("short");
   const [mock, setMock] = useState(true); // Default to mock for safety/cost
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -140,6 +166,7 @@ export default function App() {
           title: title.trim(),
           topic,
           mock,
+          videoType,
         }),
       });
 
@@ -279,6 +306,18 @@ export default function App() {
             </div>
 
             <div className="form-group">
+              <label>Video Format</label>
+              <select 
+                className="select-input"
+                value={videoType}
+                onChange={(e) => setVideoType(e.target.value)}
+              >
+                <option value="short">Short (9:16 Vertical, ~50s)</option>
+                <option value="long">Long-form (16:9 Landscape, ~3m)</option>
+              </select>
+            </div>
+
+            <div className="form-group">
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                 <label>Video Title / Idea</label>
                 <button 
@@ -369,7 +408,26 @@ export default function App() {
                     <div className="card-content">
                       <span className="card-topic">{vid.topic}</span>
                       <h3>{vid.title}</h3>
-                      <div className="card-footer">
+                      
+                      {vid.status !== "completed" && vid.status !== "failed" && (
+                        <div style={{ margin: "0.5rem 0" }}>
+                          <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.7rem", color: "hsl(var(--text-muted))", marginBottom: "0.25rem" }}>
+                            <span>{getProgressInfo(vid.status).label}</span>
+                            <span>{getProgressInfo(vid.status).percent}%</span>
+                          </div>
+                          <div style={{ width: "100%", height: "4px", backgroundColor: "rgba(255, 255, 255, 0.1)", borderRadius: "2px", overflow: "hidden" }}>
+                            <div style={{ width: `${getProgressInfo(vid.status).percent}%`, height: "100%", backgroundColor: getProgressInfo(vid.status).color, transition: "width 0.3s ease" }} />
+                          </div>
+                        </div>
+                      )}
+
+                      {vid.status === "failed" && (
+                        <span style={{ fontSize: "0.7rem", color: "rgb(239, 68, 68)", margin: "0.5rem 0", display: "block", textOverflow: "ellipsis", overflow: "hidden", whiteSpace: "nowrap" }}>
+                          ⚠️ {vid.error_message || "Failed"}
+                        </span>
+                      )}
+
+                      <div className="card-footer" style={{ marginTop: "auto" }}>
                         <span>{formatDuration(vid.duration)}</span>
                         <span>{new Date(vid.created_at).toLocaleDateString()}</span>
                       </div>
@@ -409,7 +467,13 @@ export default function App() {
                 <div>
                   <h3 className="modal-section-title">Video Output</h3>
                   {selectedVideo.status === "completed" ? (
-                    <div className="modal-video-preview">
+                    <div 
+                      className="modal-video-preview" 
+                      style={{ 
+                        aspectRatio: selectedVideo.video_type === "long" ? "16/9" : "9/16",
+                        height: selectedVideo.video_type === "long" ? "auto" : undefined 
+                      }}
+                    >
                       <video 
                         src={`${API_BASE}/assets/${slugify(selectedVideo.title)}/final.mp4`} 
                         controls
@@ -417,10 +481,72 @@ export default function App() {
                       />
                     </div>
                   ) : (
-                    <div className="modal-video-preview" style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", color: "hsl(var(--text-muted))", padding: "2rem", textAlign: "center" }}>
-                      <span style={{ fontSize: "3rem", marginBottom: "1rem" }}>⚙️</span>
-                      <span>Asset compilation is currently: <strong>{selectedVideo.status.replace("_", " ")}</strong>. Check back in a moment!</span>
-                    </div>
+                    selectedVideo.status === "failed" ? (
+                      <div 
+                        className="modal-video-preview" 
+                        style={{ 
+                          display: "flex", 
+                          flexDirection: "column", 
+                          alignItems: "center", 
+                          justifyContent: "center", 
+                          color: "hsl(var(--text-muted))", 
+                          padding: "2rem", 
+                          textAlign: "center",
+                          aspectRatio: selectedVideo.video_type === "long" ? "16/9" : "9/16",
+                          height: selectedVideo.video_type === "long" ? "auto" : undefined,
+                          borderColor: "rgba(239, 68, 68, 0.4)",
+                          backgroundColor: "rgba(239, 68, 68, 0.05)"
+                        }}
+                      >
+                        <span style={{ fontSize: "3rem", marginBottom: "1rem" }}>⚠️</span>
+                        <span style={{ color: "rgb(239, 68, 68)", fontWeight: 700, fontSize: "1.125rem" }}>Pipeline Failed</span>
+                        <div style={{ 
+                          marginTop: "1rem", 
+                          padding: "0.75rem", 
+                          backgroundColor: "rgba(0, 0, 0, 0.5)", 
+                          borderRadius: "6px", 
+                          border: "1px solid rgba(239, 68, 68, 0.2)",
+                          fontSize: "0.85rem",
+                          fontFamily: "monospace",
+                          color: "hsl(var(--text))",
+                          width: "90%",
+                          maxHeight: "150px",
+                          overflowY: "auto",
+                          textAlign: "left",
+                          wordBreak: "break-all"
+                        }}>
+                          {selectedVideo.error_message || "Unknown error occurred during pipeline execution."}
+                        </div>
+                      </div>
+                    ) : (
+                      <div 
+                        className="modal-video-preview" 
+                        style={{ 
+                          display: "flex", 
+                          flexDirection: "column", 
+                          alignItems: "center", 
+                          justifyContent: "center", 
+                          color: "hsl(var(--text))", 
+                          padding: "2rem", 
+                          textAlign: "center",
+                          aspectRatio: selectedVideo.video_type === "long" ? "16/9" : "9/16",
+                          height: selectedVideo.video_type === "long" ? "auto" : undefined
+                        }}
+                      >
+                        <span className="spinner" style={{ fontSize: "2.5rem", marginBottom: "1rem", display: "inline-block" }}>⚙️</span>
+                        <span style={{ fontWeight: 600 }}>{getProgressInfo(selectedVideo.status).label}</span>
+                        
+                        <div style={{ width: "80%", marginTop: "1.5rem" }}>
+                          <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.75rem", color: "hsl(var(--text-muted))", marginBottom: "0.5rem" }}>
+                            <span>Progress</span>
+                            <span>{getProgressInfo(selectedVideo.status).percent}%</span>
+                          </div>
+                          <div style={{ width: "100%", height: "6px", backgroundColor: "rgba(255, 255, 255, 0.1)", borderRadius: "3px", overflow: "hidden" }}>
+                            <div style={{ width: `${getProgressInfo(selectedVideo.status).percent}%`, height: "100%", backgroundColor: getProgressInfo(selectedVideo.status).color, transition: "width 0.3s ease" }} />
+                          </div>
+                        </div>
+                      </div>
+                    )
                   )}
                 </div>
 

@@ -19,5 +19,8 @@
     "@types/bun": "latest",
     "concurrently": "^8.2.2",
     "typescript": "^5"
+  },
+  "dependencies": {
+    "@ffmpeg-installer/ffmpeg": "^1.1.0"
   }
 }

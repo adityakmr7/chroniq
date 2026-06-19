@@ -6,12 +6,14 @@ export interface Scene {
   timestamp: number;
   duration: number;
   imagePrompt: string;
+  searchQuery?: string;
 }
 
 export async function generateScenes(
   script: Script,
   research: Research,
-  totalDuration: number
+  totalDuration: number,
+  isShort = true
 ): Promise<Scene[]> {
   const prompt = `You are a visual director for viral documentary YouTube Shorts.
 Given this script and research, partition the entire video into consecutive visual scenes.
@@ -34,6 +36,7 @@ Rules for Scene Generation:
 4. Each scene duration should be between 3.0 and 6.0 seconds.
 5. Provide a detailed, highly cinematic, photographic image prompt (imagePrompt) for each scene. The style should be documentary-style, dramatic, with high contrast. Use descriptive details rather than buzzwords.
 6. The scenes must follow the chronological flow of the script.
+7. The imagePrompts should generate images suited for a ${isShort ? "9:16 vertical" : "16:9 horizontal"} aspect ratio.
 
 Return ONLY JSON matching:
 {
@@ -41,7 +44,8 @@ Return ONLY JSON matching:
     {
       "timestamp": number, // start time in seconds
       "duration": number,  // duration of the scene in seconds
-      "imagePrompt": string // descriptive prompt for an AI image generator (e.g. "9:16 cinematic portrait of...")
+      "imagePrompt": string, // descriptive prompt for an AI image generator (e.g. "9:16 cinematic portrait of...")
+      "searchQuery": string // 3-4 descriptive keywords to search for a stock photo of this scene (e.g. "Nokia 3310 phone", "Blockbuster store outside")
     }
   ]
 }`;
@@ -71,7 +75,113 @@ Return ONLY JSON matching:
   return scenes;
 }
 
-export async function downloadImage(prompt: string, outputPath: string): Promise<void> {
+async function searchImageDDG(query: string): Promise<string | null> {
+  try {
+    const searchUrl = `https://duckduckgo.com/?q=${encodeURIComponent(query)}`;
+    const response = await fetch(searchUrl);
+    if (!response.ok) return null;
+    const html = await response.text();
+
+    const vqdRegex = /vqd=["']([^"']+)["']/;
+    const match = html.match(vqdRegex);
+    if (!match) return null;
+    const vqd = match[1];
+
+    const imagesUrl = `https://duckduckgo.com/i.js?l=us-en&o=json&q=${encodeURIComponent(query)}&vqd=${vqd}`;
+    const imgResponse = await fetch(imagesUrl);
+    if (!imgResponse.ok) return null;
+    const data = await imgResponse.json() as any;
+
+    if (data.results && data.results.length > 0) {
+      return data.results[0].image;
+    }
+  } catch (error) {
+    console.warn("⚠️ DuckDuckGo image search failed:", error);
+  }
+  return null;
+}
+
+const downloadedUrls = new Set<string>();
+
+async function searchImageBing(query: string): Promise<string | null> {
+  try {
+    const url = `https://www.bing.com/images/search?q=${encodeURIComponent(query)}`;
+    const headers = {
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+      "Cookie": "SRCHHPGUSR=ADLT=STRICT",
+    };
+
+    console.log(`     🔍 Searching Bing for related image: "${query}"...`);
+    const response = await fetch(url, { headers });
+    if (!response.ok) return null;
+    const html = await response.text();
+
+    const regex = /&quot;murl&quot;:&quot;(https?:[^&]+)&quot;/g;
+    const matches = Array.from(html.matchAll(regex)).map(m => m[1]);
+
+    if (matches.length > 0) {
+      if (downloadedUrls.size > 1000) {
+        downloadedUrls.clear();
+      }
+      for (const imageUrl of matches) {
+        if (!downloadedUrls.has(imageUrl)) {
+          downloadedUrls.add(imageUrl);
+          return imageUrl;
+        }
+      }
+      const randomIndex = Math.floor(Math.random() * Math.min(5, matches.length));
+      return matches[randomIndex];
+    }
+  } catch (error) {
+    console.warn("⚠️ Bing image search failed:", error);
+  }
+  return null;
+}
+
+function cleanSearchQuery(prompt: string): string {
+  let cleaned = prompt;
+
+  cleaned = cleaned.replace(/[\[\]\(\)\-\*]/g, " ");
+
+  const ignorePatterns = [
+    /^(a|an|the)\s+/i,
+    /^(9:16|16:9|vertical|horizontal|cinematic|dramatic|photographic|split|close[ -]?up|extreme close[ -]?up|wide[ -]?shot|establishing[ -]?shot|high[ -]?contrast|moody)\s+/i,
+    /^(portrait|photograph|image|illustration|artistic rendering|photo|picture|depiction|scene|view|shot) of\s+/i,
+    /^(a|an|the)\s+/i,
+  ];
+
+  let prev;
+  do {
+    prev = cleaned;
+    for (const pattern of ignorePatterns) {
+      cleaned = cleaned.replace(pattern, "").trim();
+    }
+  } while (cleaned !== prev);
+
+  const splitters = [",", ".", ";", " with ", " showing ", " against ", " in front of ", " lying on ", " sitting on "];
+  let cutIndex = -1;
+  for (const splitter of splitters) {
+    const idx = cleaned.toLowerCase().indexOf(splitter);
+    if (idx !== -1) {
+      if (cutIndex === -1 || idx < cutIndex) {
+        cutIndex = idx;
+      }
+    }
+  }
+
+  if (cutIndex !== -1) {
+    cleaned = cleaned.substring(0, cutIndex).trim();
+  }
+
+  const words = cleaned.split(/\s+/).filter(w => w.trim().length > 0);
+  if (words.length > 5) {
+    cleaned = words.slice(0, 5).join(" ");
+  }
+
+  return cleaned.trim() || prompt.split(/\s+/).slice(0, 4).join(" ");
+}
+
+export async function downloadImage(prompt: string, outputPath: string, isShort = true): Promise<void> {
   const provider = process.env.IMAGE_PROVIDER || "placeholder";
 
   if (provider === "local_sd") {
@@ -81,7 +191,6 @@ export async function downloadImage(prompt: string, outputPath: string): Promise
       console.log(`     🎨 Generating image locally via Stable Diffusion API...`);
 
       // Determine dimensions based on prompt aspect ratio suggestion
-      const isShort = !prompt.includes("16:9");
       const width = isShort ? 540 : 960;
       const height = isShort ? 960 : 540;
 
@@ -213,9 +322,39 @@ export async function downloadImage(prompt: string, outputPath: string): Promise
     }
   }
 
+  if (provider === "placeholder") {
+    const searchQuery = cleanSearchQuery(prompt);
+    let searchResultUrl = await searchImageBing(searchQuery);
+
+    if (!searchResultUrl) {
+      console.log(`     🔍 Fallback: Searching DuckDuckGo for related image: "${searchQuery}"...`);
+      searchResultUrl = await searchImageDDG(searchQuery);
+    }
+
+    if (searchResultUrl) {
+      try {
+        console.log(`     📥 Downloading related image from: ${searchResultUrl}`);
+        const imgRes = await fetch(searchResultUrl, {
+          headers: {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+          }
+        });
+        if (imgRes.ok) {
+          await Bun.write(outputPath, await imgRes.arrayBuffer());
+          return;
+        } else {
+          console.warn(`     ⚠️ Image download failed with status ${imgRes.status}, falling back to Picsum...`);
+        }
+      } catch (err) {
+        console.warn(`     ⚠️ Image download failed, falling back to Picsum...`, err);
+      }
+    }
+  }
+
   // Fallback to Picsum placeholder
   console.log(`     🖼️  Downloading Picsum placeholder image...`);
-  const picsumRes = await fetch("https://picsum.photos/1080/1920");
+  const resolution = isShort ? "1080/1920" : "1920/1080";
+  const picsumRes = await fetch(`https://picsum.photos/${resolution}?random=${Math.random()}`);
   if (!picsumRes.ok) {
     throw new Error(`Failed to download placeholder: ${picsumRes.status}`);
   }

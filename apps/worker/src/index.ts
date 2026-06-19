@@ -38,10 +38,11 @@ function slugify(text: string): string {
 }
 
 async function processVideoJob(job: Job) {
-  const { videoId, category, mock } = job.data as {
+  const { videoId, category, mock, videoType } = job.data as {
     videoId: string;
     category?: string;
     mock?: boolean;
+    videoType?: string;
   };
 
   const mockFlag = !!mock;
@@ -54,7 +55,7 @@ async function processVideoJob(job: Job) {
   }
 
   const { video } = details;
-  const isShort = true; // Defaulting to Shorts for now
+  const isShort = (videoType || video.video_type || "short") === "short";
 
   try {
     let topic;
@@ -162,7 +163,7 @@ async function processVideoJob(job: Job) {
       console.log(`   [Job ${job.id}] ✍️  Writing script...`);
       await updateVideoStatus(videoId, "generating_script");
       await job.updateProgress(30);
-      script = await generateScript(topic, research);
+      script = await generateScript(topic, research, isShort);
 
       // 4. Voice Synthesis
       console.log(`   [Job ${job.id}] 🎙️  Synthesizing voice...`);
@@ -182,7 +183,7 @@ async function processVideoJob(job: Job) {
       console.log(`   [Job ${job.id}] 🎨 Planning visual prompts...`);
       await updateVideoStatus(videoId, "generating_visuals");
       await job.updateProgress(60);
-      scenes = await generateScenes(script, research, totalDuration);
+      scenes = await generateScenes(script, research, totalDuration, isShort);
 
       // 6. Metadata Planning
       ytMetadata = await generateYouTubeMetadata(topic, script, research, isShort);
@@ -205,10 +206,11 @@ async function processVideoJob(job: Job) {
       const scenePath = join(outputDir, filename);
       
       if (mockFlag) {
-        const imgRes = await fetch(`https://picsum.photos/1080/1920?sig=${i}`);
+        const resolution = isShort ? "1080/1920" : "1920/1080";
+        const imgRes = await fetch(`https://picsum.photos/${resolution}?sig=${i}`);
         await Bun.write(scenePath, await imgRes.arrayBuffer());
       } else {
-        await downloadImage(scene.imagePrompt, scenePath);
+        await downloadImage(scene.searchQuery || scene.imagePrompt, scenePath, isShort);
       }
       
       // Save scene image asset to database
@@ -277,7 +279,7 @@ async function processVideoJob(job: Job) {
       sceneInputs,
       "captions.ass",
       finalVideoName,
-      { enableZoom: true }
+      { enableZoom: true, isShort }
     );
     await addAsset(videoId, "video", finalVideoPath);
 
@@ -312,7 +314,7 @@ async function processVideoJob(job: Job) {
 
   } catch (error: any) {
     console.error(`   ❌ [Job ${job.id}] Pipeline failed:`, error);
-    await updateVideoStatus(videoId, "failed");
+    await updateVideoStatus(videoId, "failed", undefined, undefined, error.message || String(error));
     throw error;
   }
 }

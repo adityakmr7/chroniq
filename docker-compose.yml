@@ -49,7 +49,7 @@ services:
       - TTS_PROVIDER=${TTS_PROVIDER}
       - IMAGE_PROVIDER=${IMAGE_PROVIDER}
       - VIDEO_ENCODER=${VIDEO_ENCODER}
-      - OLLAMA_URL=http://ollama:11434
+      - OLLAMA_URL=${OLLAMA_URL}
       - OLLAMA_MODEL=${OLLAMA_MODEL}
       - KOKORO_URL=http://kokoro-tts:8880
       - KOKORO_VOICE=${KOKORO_VOICE}
@@ -57,6 +57,8 @@ services:
     depends_on:
       - postgres
       - redis
+    volumes:
+      - ./output:/usr/src/app/output
     extra_hosts:
       - "host.docker.internal:host-gateway"
 
@@ -81,7 +83,7 @@ services:
       - TTS_PROVIDER=${TTS_PROVIDER}
       - IMAGE_PROVIDER=${IMAGE_PROVIDER}
       - VIDEO_ENCODER=${VIDEO_ENCODER}
-      - OLLAMA_URL=http://ollama:11434
+      - OLLAMA_URL=${OLLAMA_URL}
       - OLLAMA_MODEL=${OLLAMA_MODEL}
       - KOKORO_URL=http://kokoro-tts:8880
       - KOKORO_VOICE=${KOKORO_VOICE}
@@ -107,23 +109,23 @@ services:
     depends_on:
       - api
 
-  # Offline Local LLM (Ollama)
-  ollama:
-    image: ollama/ollama:latest
-    container_name: chroniq-ollama
-    restart: always
-    ports:
-      - "11434:11434"
-    volumes:
-      - ollama_data:/root/.ollama
-    # NOTE: To use your Nvidia GPU with Ollama inside Docker, uncomment the block below:
-    # deploy:
-    #   resources:
-    #     reservations:
-    #       devices:
-    #         - driver: nvidia
-    #           count: all
-    #           capabilities: [gpu]
+  # Offline Local LLM (Ollama) - Commented out since you are running Ollama natively on Windows
+  # ollama:
+  #   image: ollama/ollama:latest
+  #   container_name: chroniq-ollama
+  #   restart: always
+  #   ports:
+  #     - "11434:11434"
+  #   volumes:
+  #     - ollama_data:/root/.ollama
+  #   # NOTE: To use your Nvidia GPU with Ollama inside Docker, uncomment the block below:
+  #   # deploy:
+  #   #   resources:
+  #   #     reservations:
+  #   #       devices:
+  #   #         - driver: nvidia
+  #   #           count: all
+  #   #           capabilities: [gpu]
 
   # Offline Local TTS (Kokoro FastAPI)
   kokoro-tts:
@@ -146,4 +148,4 @@ services:
 volumes:
   postgres_data:
   redis_data:
-  ollama_data:
+  # ollama_data:
