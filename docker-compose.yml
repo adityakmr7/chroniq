@@ -1,0 +1,149 @@
+version: '3.8'
+
+services:
+  # Database Service
+  postgres:
+    image: postgres:16-alpine
+    container_name: chroniq-postgres
+    restart: always
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: chroniq
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  # Queue Service
+  redis:
+    image: redis:7-alpine
+    container_name: chroniq-redis
+    restart: always
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+
+  # API Server Service
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: chroniq-api
+    restart: always
+    command: bun run dev:api
+    ports:
+      - "3000:3000"
+    environment:
+      - DATABASE_URL=postgres://postgres:postgres@postgres:5432/chroniq
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - PORT=3000
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - ELEVENLABS_API_KEY=${ELEVENLABS_API_KEY}
+      - ELEVENLABS_VOICE_ID=${ELEVENLABS_VOICE_ID}
+      - REPLICATE_API_KEY=${REPLICATE_API_KEY}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - LLM_PROVIDER=${LLM_PROVIDER}
+      - TTS_PROVIDER=${TTS_PROVIDER}
+      - IMAGE_PROVIDER=${IMAGE_PROVIDER}
+      - VIDEO_ENCODER=${VIDEO_ENCODER}
+      - OLLAMA_URL=http://ollama:11434
+      - OLLAMA_MODEL=${OLLAMA_MODEL}
+      - KOKORO_URL=http://kokoro-tts:8880
+      - KOKORO_VOICE=${KOKORO_VOICE}
+      - LOCAL_SD_URL=http://host.docker.internal:7860
+    depends_on:
+      - postgres
+      - redis
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  # BullMQ Queue Worker Service
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: chroniq-worker
+    restart: always
+    command: bun run dev:worker
+    environment:
+      - DATABASE_URL=postgres://postgres:postgres@postgres:5432/chroniq
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - ELEVENLABS_API_KEY=${ELEVENLABS_API_KEY}
+      - ELEVENLABS_VOICE_ID=${ELEVENLABS_VOICE_ID}
+      - REPLICATE_API_KEY=${REPLICATE_API_KEY}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - LLM_PROVIDER=${LLM_PROVIDER}
+      - TTS_PROVIDER=${TTS_PROVIDER}
+      - IMAGE_PROVIDER=${IMAGE_PROVIDER}
+      - VIDEO_ENCODER=${VIDEO_ENCODER}
+      - OLLAMA_URL=http://ollama:11434
+      - OLLAMA_MODEL=${OLLAMA_MODEL}
+      - KOKORO_URL=http://kokoro-tts:8880
+      - KOKORO_VOICE=${KOKORO_VOICE}
+      - LOCAL_SD_URL=http://host.docker.internal:7860
+    depends_on:
+      - postgres
+      - redis
+    volumes:
+      - ./output:/usr/src/app/output # Saves final videos back to host machine
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  # Studio Web UI Dashboard Service
+  dashboard:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: chroniq-dashboard
+    restart: always
+    command: bun run dev:dashboard
+    ports:
+      - "5173:5173"
+    depends_on:
+      - api
+
+  # Offline Local LLM (Ollama)
+  ollama:
+    image: ollama/ollama:latest
+    container_name: chroniq-ollama
+    restart: always
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    # NOTE: To use your Nvidia GPU with Ollama inside Docker, uncomment the block below:
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
+
+  # Offline Local TTS (Kokoro FastAPI)
+  kokoro-tts:
+    image: ghcr.io/remsky/kokoro-fastapi-cpu:latest
+    # NOTE: To use your Nvidia GPU (CUDA) for voice synthesis, swap to the GPU image:
+    # image: ghcr.io/remsky/kokoro-fastapi-gpu:latest
+    # And uncomment the block below:
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
+    container_name: chroniq-kokoro
+    restart: always
+    ports:
+      - "8880:8880"
+
+volumes:
+  postgres_data:
+  redis_data:
+  ollama_data:

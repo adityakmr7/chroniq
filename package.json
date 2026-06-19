@@ -1,0 +1,23 @@
+{
+  "name": "chroniq-monorepo",
+  "version": "0.1.0",
+  "description": "AI-powered faceless YouTube automation monorepo",
+  "type": "module",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev:api": "bun --env-file=.env apps/api/src/index.ts",
+    "dev:worker": "bun --env-file=.env apps/worker/src/index.ts",
+    "dev:dashboard": "bun run --cwd apps/dashboard dev",
+    "dev": "concurrently -n api,worker,dashboard -c blue,magenta,green \"bun run dev:api\" \"bun run dev:worker\" \"bun run dev:dashboard\"",
+    "generate-video": "bun --env-file=.env apps/worker/src/index.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "concurrently": "^8.2.2",
+    "typescript": "^5"
+  }
+}

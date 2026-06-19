@@ -1,0 +1,7 @@
+file 'scene_0.jpg'
+duration 5.00
+file 'scene_1.jpg'
+duration 5.00
+file 'scene_2.jpg'
+duration 5.00
+file 'scene_2.jpg'

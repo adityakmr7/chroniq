@@ -1,0 +1,10 @@
+{
+  "name": "@chroniq/api",
+  "version": "0.1.0",
+  "type": "module",
+  "dependencies": {
+    "@chroniq/db": "workspace:*",
+    "bullmq": "^5.8.1",
+    "ioredis": "^5.4.1"
+  }
+}
