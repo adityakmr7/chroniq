@@ -479,6 +479,83 @@ async function generateEdgeTTS(text: string, voice: string, rate = "+0%"): Promi
 // ─────────────────────────────────────────────────────────────────────────────
 // Provider: Kokoro (Local, English only)
 // ─────────────────────────────────────────────────────────────────────────────
+async function decodeAudioWithFFmpeg(audioBuffer: ArrayBuffer): Promise<Float32Array> {
+  const ffmpegPath = ffmpegInstaller.path;
+  const tempInputPath = join(tmpdir(), `kokoro_in_${Date.now()}_${crypto.randomUUID()}.mp3`);
+  const tempOutputPath = join(tmpdir(), `kokoro_out_${Date.now()}_${crypto.randomUUID()}.raw`);
+
+  await writeFile(tempInputPath, Buffer.from(audioBuffer));
+
+  try {
+    const proc = Bun.spawn([
+      ffmpegPath,
+      "-y",
+      "-i", tempInputPath,
+      "-f", "f32le",
+      "-ac", "1",
+      "-ar", "16000",
+      tempOutputPath
+    ], { stdout: "ignore", stderr: "pipe" });
+
+    const exitCode = await proc.exited;
+    if (exitCode !== 0) {
+      const err = await new Response(proc.stderr).text();
+      throw new Error(`FFmpeg audio decoding failed (exit code ${exitCode}): ${err}`);
+    }
+
+    const rawBuffer = await readFile(tempOutputPath);
+    return new Float32Array(rawBuffer.buffer, rawBuffer.byteOffset, rawBuffer.byteLength / 4);
+  } finally {
+    try { await unlink(tempInputPath); } catch {}
+    try { await unlink(tempOutputPath); } catch {}
+  }
+}
+
+let whisperPipeline: any = null;
+
+async function transcribeAudioWithWhisper(audioBuffer: ArrayBuffer, scriptText: string): Promise<WordAlignment[]> {
+  console.log(`     🎙️  Decoding audio via FFmpeg for transcription...`);
+  const audioData = await decodeAudioWithFFmpeg(audioBuffer);
+
+  if (!whisperPipeline) {
+    console.log(`     🎙️  Initializing local Whisper transcriber (Xenova/whisper-tiny.en)...`);
+    const { pipeline, env } = await import("@xenova/transformers");
+    env.allowLocalModels = false; // download from Hugging Face hub and cache locally
+    whisperPipeline = await pipeline("automatic-speech-recognition", "Xenova/whisper-tiny.en");
+  }
+
+  console.log(`     🎙️  Transcribing audio via local Whisper...`);
+  const result = await whisperPipeline(audioData, {
+    chunk_length_s: 30,
+    stride_length_s: 5,
+    return_timestamps: "word",
+  });
+
+  const rawAlignments: { word: string; start: number; end: number }[] = [];
+  if (result && Array.isArray(result.chunks)) {
+    for (const chunk of result.chunks) {
+      const text = chunk.text.trim();
+      if (!text) continue;
+      const start = Array.isArray(chunk.timestamp) ? chunk.timestamp[0] : null;
+      const end = Array.isArray(chunk.timestamp) ? chunk.timestamp[1] : null;
+      if (start !== null && end !== null) {
+        rawAlignments.push({
+          word: text,
+          start: Math.round(start * 100) / 100,
+          end: Math.round(end * 100) / 100,
+        });
+      }
+    }
+  }
+
+  if (rawAlignments.length === 0) {
+    throw new Error("Whisper transcriber returned no valid word segments.");
+  }
+
+  console.log(`     🎙️  Aligning Whisper timestamps to script...`);
+  return alignMetadataToScript(scriptText, rawAlignments);
+}
+
 async function generateKokoroTTS(text: string, voice: string): Promise<VoiceGenerationResult> {
   const url = process.env.KOKORO_URL || "http://localhost:8880";
   const endpoint = `${url}/v1/audio/speech`;
@@ -494,8 +571,15 @@ async function generateKokoroTTS(text: string, voice: string): Promise<VoiceGene
   if (!res.ok) throw new Error(`Kokoro TTS failed: ${res.status} ${await res.text()}`);
 
   const audioBuffer = await res.arrayBuffer();
-  const duration = await extractAudioDuration(audioBuffer);
-  const alignments = estimateTimestamps(text, duration);
+
+  let alignments: WordAlignment[];
+  try {
+    alignments = await transcribeAudioWithWhisper(audioBuffer, text);
+  } catch (err: any) {
+    console.warn(`     ⚠️ Local Whisper transcription failed: ${err.message || err}. Falling back to mathematical estimation...`);
+    const duration = await extractAudioDuration(audioBuffer);
+    alignments = estimateTimestamps(text, duration);
+  }
 
   return { audioBuffer, alignments };
 }
@@ -576,19 +660,39 @@ export async function generateVoice(
 
   switch (provider) {
     case "edge": {
-      const voice = overrideVoice || process.env.EDGE_VOICE || "en-US-AriaNeural";
+      const isVoiceValid = overrideVoice && EDGE_VOICES.some(v => v.id === overrideVoice);
+      const voice = isVoiceValid ? overrideVoice : (process.env.EDGE_VOICE || "en-US-AriaNeural");
       const rate = toneToEdgeRate(voiceTone);
       return generateEdgeTTS(text, voice, rate);
     }
     case "local":
     case "kokoro": {
-      const voice = overrideVoice || process.env.KOKORO_VOICE || "af_bella";
+      const isVoiceValid = overrideVoice && KOKORO_VOICES.some(v => v.id === overrideVoice);
+      const voice = isVoiceValid ? overrideVoice : (process.env.KOKORO_VOICE || "af_bella");
       return generateKokoroTTS(text, voice);
     }
     case "cloud":
     case "elevenlabs": {
       const voiceId = overrideVoice || process.env.ELEVENLABS_VOICE_ID || "pNInz6obpgDQGcFmaJgB";
-      return generateElevenLabsTTS(text, voiceId, withTimestamps);
+      try {
+        return await generateElevenLabsTTS(text, voiceId, withTimestamps);
+      } catch (err: any) {
+        console.warn(`     ⚠️ ElevenLabs TTS failed: ${err.message || err}. Falling back to local/free TTS...`);
+        
+        // Detect Hindi (Devanagari characters)
+        const isHindi = /[\u0900-\u097F]/.test(text) || text.includes("नमस्ते");
+        
+        if (isHindi) {
+          console.log("     🎙️ Fallback: Using Edge TTS for Hindi voiceover...");
+          const fallbackVoice = "hi-IN-SwaraNeural";
+          const rate = toneToEdgeRate(voiceTone);
+          return await generateEdgeTTS(text, fallbackVoice, rate);
+        } else {
+          console.log("     🎙️ Fallback: Using Kokoro (Local) for English voiceover...");
+          const fallbackVoice = process.env.KOKORO_VOICE || "af_bella";
+          return await generateKokoroTTS(text, fallbackVoice);
+        }
+      }
     }
     default:
       throw new Error(`Unknown TTS_PROVIDER: "${provider}". Use "edge", "local" (Kokoro), or "cloud" (ElevenLabs).`);

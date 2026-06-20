@@ -113,6 +113,13 @@ function HitlReviewPanel({
   const [ttsProvider, setTtsProvider] = useState(video.tts_provider || "local");
   const [voiceId, setVoiceId] = useState(video.voice_id || "");
   const [isRegeneratingVoice, setIsRegeneratingVoice] = useState(false);
+  const [customVoiceEnabled, setCustomVoiceEnabled] = useState(() => {
+    if (video.voice_id && video.tts_provider === "elevenlabs") {
+      const list = voiceCatalog?.["elevenlabs"] || [];
+      return !list.some((v: any) => v.id === video.voice_id);
+    }
+    return false;
+  });
 
   // Cache busters
   const [audioVersion, setAudioVersion] = useState(0);
@@ -237,8 +244,9 @@ function HitlReviewPanel({
   // Helper to filter voices based on provider & language
   const getMatchingVoices = (provider: string, lang: string) => {
     if (!voiceCatalog) return [];
-    const list = voiceCatalog[provider] || [];
-    if (provider === "elevenlabs") return list;
+    const catalogKey = provider === "local" ? "kokoro" : (provider === "cloud" ? "elevenlabs" : provider);
+    const list = voiceCatalog[catalogKey] || [];
+    if (catalogKey === "elevenlabs") return list;
     return list.filter((v: any) => v.lang === lang);
   };
 
@@ -438,17 +446,43 @@ function HitlReviewPanel({
                 </div>
 
                 <div>
-                  <label style={{ fontSize: "0.65rem", color: "hsl(var(--text-muted))", display: "block", marginBottom: "0.2rem" }}>Voice</label>
-                  <select 
-                    value={voiceId} 
-                    onChange={(e) => setVoiceId(e.target.value)}
-                    style={{ width: "100%", background: "rgba(0,0,0,0.3)", color: "#fff", border: "1px solid hsl(var(--border))", borderRadius: "4px", padding: "0.25rem", fontSize: "0.75rem", outline: "none" }}
-                  >
-                    {matchingVoices.map((v: any) => (
-                      <option key={v.id} value={v.id}>{v.label}</option>
-                    ))}
-                    {matchingVoices.length === 0 && <option value="">No voices available</option>}
-                  </select>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.2rem" }}>
+                    <label style={{ fontSize: "0.65rem", color: "hsl(var(--text-muted))" }}>Voice</label>
+                    {ttsProvider === "elevenlabs" && (
+                      <button 
+                        type="button" 
+                        onClick={() => {
+                          setCustomVoiceEnabled(!customVoiceEnabled);
+                          setVoiceId("");
+                        }} 
+                        style={{ background: "none", border: "none", color: "hsl(var(--accent-purple))", fontSize: "0.65rem", fontWeight: 600, cursor: "pointer" }}
+                      >
+                        {customVoiceEnabled ? "List" : "Custom ID"}
+                      </button>
+                    )}
+                  </div>
+                  {customVoiceEnabled && ttsProvider === "elevenlabs" ? (
+                    <input
+                      type="text"
+                      className="input-text"
+                      placeholder="Voice ID"
+                      value={voiceId}
+                      onChange={(e) => setVoiceId(e.target.value.trim())}
+                      style={{ padding: "0.25rem", fontSize: "0.75rem", outline: "none", width: "100%", boxSizing: "border-box", color: "#fff", background: "rgba(0,0,0,0.3)", border: "1px solid hsl(var(--border))", borderRadius: "4px" }}
+                      required
+                    />
+                  ) : (
+                    <select 
+                      value={voiceId} 
+                      onChange={(e) => setVoiceId(e.target.value)}
+                      style={{ width: "100%", background: "rgba(0,0,0,0.3)", color: "#fff", border: "1px solid hsl(var(--border))", borderRadius: "4px", padding: "0.25rem", fontSize: "0.75rem", outline: "none" }}
+                    >
+                      {matchingVoices.map((v: any) => (
+                        <option key={v.id} value={v.id}>{v.label}</option>
+                      ))}
+                      {matchingVoices.length === 0 && <option value="">No voices available</option>}
+                    </select>
+                  )}
                 </div>
               </div>
 
@@ -1383,7 +1417,7 @@ export default function App() {
 
   // Form states
   const [title, setTitle] = useState("");
-  const [topic, setTopic] = useState("Technology History");
+  const [topic, setTopic] = useState("Horror Stories");
   const [videoType, setVideoType] = useState("short");
   const [mock, setMock] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -1396,10 +1430,12 @@ export default function App() {
   const [language, setLanguage] = useState("en");
   const [ttsProvider, setTtsProvider] = useState("local");
   const [voiceId, setVoiceId] = useState("");
+  const [customVoiceEnabled, setCustomVoiceEnabled] = useState(false);
 
   // Modal states
   const [selectedVideo, setSelectedVideo] = useState<Video | null>(null);
   const [videoDetails, setVideoDetails] = useState<{ video: Video; script: VideoScript | null; assets: VideoAsset[] } | null>(null);
+  const [completedMetadata, setCompletedMetadata] = useState<any>(null);
   const [isLoadingDetails, setIsLoadingDetails] = useState(false);
 
   // HITL review modal
@@ -1522,8 +1558,9 @@ export default function App() {
   // Helper to filter voices based on provider & language
   const getMatchingVoices = (provider: string, lang: string) => {
     if (!voiceCatalog) return [];
-    const list = voiceCatalog[provider] || [];
-    if (provider === "elevenlabs") return list;
+    const catalogKey = provider === "local" ? "kokoro" : (provider === "cloud" ? "elevenlabs" : provider);
+    const list = voiceCatalog[catalogKey] || [];
+    if (catalogKey === "elevenlabs") return list;
     return list.filter((v: any) => v.lang === lang);
   };
 
@@ -1546,12 +1583,22 @@ export default function App() {
   }, [ttsProvider, language, matchingVoices, voiceId]);
 
   useEffect(() => {
-    if (!selectedVideo) { setVideoDetails(null); return; }
+    if (!selectedVideo) { 
+      setVideoDetails(null); 
+      setCompletedMetadata(null); 
+      return; 
+    }
     const fetch_ = async () => {
       setIsLoadingDetails(true);
       try {
         const res = await fetch(`${API_BASE}/api/videos/${selectedVideo.id}`);
         if (res.ok) setVideoDetails(await res.json());
+
+        const metaRes = await fetch(`${API_BASE}/api/videos/${selectedVideo.id}/metadata`);
+        if (metaRes.ok) {
+          const metaData = await metaRes.json();
+          setCompletedMetadata(metaData);
+        }
       } finally { setIsLoadingDetails(false); }
     };
     fetch_();
@@ -1617,14 +1664,38 @@ export default function App() {
 
   const handleGenerateTopicSuggestion = () => {
     const suggestions: Record<string, string[]> = {
-      "Technology History": ["Why Nokia Failed", "The Rise of NVIDIA", "How Netscape Lost the Browser War", "How IBM Missed the PC Revolution", "The History of Android"],
-      "Startup Stories": ["The Story of Bitcoin", "How Airbnb Survived 2008", "The Rise of Stripe", "Why Theranos Collapsed", "How Uber Conquered the World"],
-      "AI & Innovation": ["The Secret Origin of OpenAI", "How AlphaGo Defeated Lee Sedol", "How GPUs Changed AI Forever", "What is Quantum Computing?", "The Future of Humanoid Robots"],
-      "Business Case Studies": ["How Netflix Destroyed Blockbuster", "The Decline of Sears", "How WeWork Lost 40 Billion Dollars", "Why Toys R Us Went Bankrupt", "How Apple Saved Itself in 1997"],
-      "Historical Events": ["The Shortest War in History", "How Rome Built Their Aqueducts", "The Space Race Secrets", "The Mystery of the Roanoke Colony", "The Story of the Library of Alexandria"],
-      "Forgotten Stories": ["The Man Who Accidentally Saved the World", "The Great Emu War of Australia", "The Balloon Bomb Invasion of America", "The London Beer Flood of 1814", "The Forgotten Inventor of Radio"],
+      "Horror Stories": [
+        "The Shadows of Bhangarh Fort",
+        "The Witch Hunt of Salem",
+        "The Haunting of Bangalore Alley",
+        "The Legend of the Bell Witch",
+        "The Whispering Woods",
+        "The Mystery of the Mary Celeste",
+        "The Enfield Poltergeist Case",
+        "The Dyatlov Pass Incident"
+      ],
+      "Spirituality": [
+        "The Law of Vibration Explained",
+        "How Meditation Rewires the Brain",
+        "The Seven Hermetic Principles",
+        "The Sacred Geometry of Ancient Temples",
+        "The Secret Power of Mantras",
+        "Understanding Zen Koans",
+        "The Third Eye Awakening",
+        "The Secret Teachings of Upanishads"
+      ],
+      "History": [
+        "The Library of Alexandria Collapse",
+        "The Shortest War in History",
+        "The Secret Rooms of Rome",
+        "How the Great Pyramid Was Built",
+        "The Mystery of the Roanoke Colony",
+        "The Fall of the Aztec Empire",
+        "The Secrets of the Knights Templar",
+        "The Forgotten Empress of Byzantium"
+      ]
     };
-    const list = suggestions[topic] || suggestions["Technology History"];
+    const list = suggestions[topic] || suggestions["Horror Stories"];
     setTitle(list[Math.floor(Math.random() * list.length)]);
   };
 
@@ -1813,22 +1884,18 @@ export default function App() {
           <h2 className="panel-title">Video Generator</h2>
           <form onSubmit={handleQueueVideo} style={{ display: "flex", flexDirection: "column", gap: "1.25rem" }}>
             <div className="form-group">
-              <label>Select Video Niche / Category</label>
-              <select className="select-input" value={topic} onChange={(e) => setTopic(e.target.value)}>
-                <option>Technology History</option>
-                <option>Startup Stories</option>
-                <option>AI & Innovation</option>
-                <option>Business Case Studies</option>
-                <option>Historical Events</option>
-                <option>Forgotten Stories</option>
-                <option>Horror Stories 🎃</option>
-              </select>
-            </div>
+               <label>Select Video Niche / Category</label>
+               <select className="select-input" value={topic} onChange={(e) => setTopic(e.target.value)}>
+                 <option value="Horror Stories">Horror Stories 🎃</option>
+                 <option value="Spirituality">Spirituality 🧘</option>
+                 <option value="History">History 🏛️</option>
+               </select>
+             </div>
             <div className="form-group">
               <label>Video Format</label>
               <select className="select-input" value={videoType} onChange={(e) => setVideoType(e.target.value)}>
                 <option value="short">Short (9:16 Vertical, ~50s)</option>
-                <option value="long">Long-form (16:9 Landscape, ~3m)</option>
+                <option value="long">Long-form (16:9 Landscape, ~8m)</option>
               </select>
             </div>
             <div className="form-group">
@@ -1925,13 +1992,38 @@ export default function App() {
 
             {/* Voice Selection */}
             <div className="form-group">
-              <label>Select Narrator Voice</label>
-              <select className="select-input" value={voiceId} onChange={(e) => setVoiceId(e.target.value)}>
-                {matchingVoices.map((v: any) => (
-                  <option key={v.id} value={v.id}>{v.label}</option>
-                ))}
-                {matchingVoices.length === 0 && <option value="">No voices available</option>}
-              </select>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <label>Select Narrator Voice</label>
+                {ttsProvider === "elevenlabs" && (
+                  <button 
+                    type="button" 
+                    onClick={() => {
+                      setCustomVoiceEnabled(!customVoiceEnabled);
+                      setVoiceId("");
+                    }} 
+                    style={{ background: "none", border: "none", color: "hsl(var(--accent-purple))", fontSize: "0.75rem", fontWeight: 600, cursor: "pointer" }}
+                  >
+                    {customVoiceEnabled ? "📋 List" : "✏️ Custom ID"}
+                  </button>
+                )}
+              </div>
+              {customVoiceEnabled && ttsProvider === "elevenlabs" ? (
+                <input
+                  type="text"
+                  className="input-text"
+                  placeholder="Paste ElevenLabs Voice ID (e.g. pNInz6obpgDQGcFmaJgB)"
+                  value={voiceId}
+                  onChange={(e) => setVoiceId(e.target.value.trim())}
+                  required
+                />
+              ) : (
+                <select className="select-input" value={voiceId} onChange={(e) => setVoiceId(e.target.value)}>
+                  {matchingVoices.map((v: any) => (
+                    <option key={v.id} value={v.id}>{v.label}</option>
+                  ))}
+                  {matchingVoices.length === 0 && <option value="">No voices available</option>}
+                </select>
+              )}
             </div>
 
             {/* Captions Toggle Switch */}
@@ -2204,6 +2296,73 @@ export default function App() {
                       <div style={{ marginTop: "1rem", borderTop: "1px dashed hsl(var(--border))", paddingTop: "1rem" }}>
                         <h4 style={{ fontSize: "0.75rem", fontWeight: 700, color: "hsl(var(--text-muted))", textTransform: "uppercase", marginBottom: "0.5rem" }}>📅 Posting Schedule</h4>
                         <VideoScheduler videoId={selectedVideo.id} API_BASE={API_BASE} onScheduled={fetchVideos} />
+                      </div>
+                    )}
+
+                    {completedMetadata && (
+                      <div style={{ marginTop: "1.25rem", background: "rgba(255,255,255,0.02)", border: "1px solid hsl(var(--border))", borderRadius: "8px", padding: "1rem" }}>
+                        <h4 style={{ fontSize: "0.75rem", fontWeight: 700, color: "hsl(var(--accent-purple))", textTransform: "uppercase", marginBottom: "0.75rem", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                          <span>📺 Generated YouTube Info</span>
+                          <span style={{ fontSize: "0.65rem", color: "hsl(var(--text-muted))", textTransform: "none" }}>Ready to upload</span>
+                        </h4>
+
+                        {/* Title Copy Card */}
+                        <div style={{ marginBottom: "0.75rem" }}>
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.2rem" }}>
+                            <label style={{ fontSize: "0.65rem", color: "hsl(var(--text-muted))", fontWeight: 600 }}>Optimized Title</label>
+                            <button 
+                              onClick={() => {
+                                navigator.clipboard.writeText(completedMetadata.title || "");
+                                alert("Title copied to clipboard!");
+                              }}
+                              style={{ background: "none", border: "none", color: "hsl(var(--accent-purple))", fontSize: "0.65rem", cursor: "pointer", padding: 0 }}
+                            >
+                              📋 Copy
+                            </button>
+                          </div>
+                          <div style={{ background: "rgba(0,0,0,0.3)", border: "1px solid rgba(255,255,255,0.05)", borderRadius: "4px", padding: "0.4rem 0.6rem", fontSize: "0.8rem", color: "#fff", wordBreak: "break-word" }}>
+                            {completedMetadata.title}
+                          </div>
+                        </div>
+
+                        {/* Description Copy Card */}
+                        <div style={{ marginBottom: "0.75rem" }}>
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.2rem" }}>
+                            <label style={{ fontSize: "0.65rem", color: "hsl(var(--text-muted))", fontWeight: 600 }}>Description</label>
+                            <button 
+                              onClick={() => {
+                                navigator.clipboard.writeText(completedMetadata.description || "");
+                                alert("Description copied to clipboard!");
+                              }}
+                              style={{ background: "none", border: "none", color: "hsl(var(--accent-purple))", fontSize: "0.65rem", cursor: "pointer", padding: 0 }}
+                            >
+                              📋 Copy
+                            </button>
+                          </div>
+                          <pre style={{ margin: 0, whiteSpace: "pre-wrap", background: "rgba(0,0,0,0.3)", border: "1px solid rgba(255,255,255,0.05)", borderRadius: "4px", padding: "0.5rem 0.6rem", fontSize: "0.75rem", fontFamily: "inherit", color: "#ddd", maxHeight: "150px", overflowY: "auto", wordBreak: "break-word" }}>
+                            {completedMetadata.description}
+                          </pre>
+                        </div>
+
+                        {/* Tags Copy Card */}
+                        <div>
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.2rem" }}>
+                            <label style={{ fontSize: "0.65rem", color: "hsl(var(--text-muted))", fontWeight: 600 }}>Tags / Keywords</label>
+                            <button 
+                              onClick={() => {
+                                const tagsStr = Array.isArray(completedMetadata.tags) ? completedMetadata.tags.join(", ") : "";
+                                navigator.clipboard.writeText(tagsStr);
+                                alert("Tags copied to clipboard!");
+                              }}
+                              style={{ background: "none", border: "none", color: "hsl(var(--accent-purple))", fontSize: "0.65rem", cursor: "pointer", padding: 0 }}
+                            >
+                              📋 Copy
+                            </button>
+                          </div>
+                          <div style={{ background: "rgba(0,0,0,0.3)", border: "1px solid rgba(255,255,255,0.05)", borderRadius: "4px", padding: "0.4rem 0.6rem", fontSize: "0.75rem", color: "#ccc", wordBreak: "break-word" }}>
+                            {Array.isArray(completedMetadata.tags) ? completedMetadata.tags.join(", ") : ""}
+                          </div>
+                        </div>
                       </div>
                     )}
                   </div>

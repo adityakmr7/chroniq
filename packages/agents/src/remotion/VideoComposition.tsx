@@ -135,6 +135,9 @@ export const VideoComposition: React.FC<VideoCompositionProps> = ({
       )}
 
 
+      {/* ── Film Grain Overlay (shifting noise) ── */}
+      <FilmGrain />
+
       {/* ── Color Grading Overlay (style-specific) ── */}
       <ColorGradingOverlay stylePresetName={stylePresetName} />
 
@@ -311,6 +314,35 @@ const FlashCut: React.FC<{ frame: number }> = ({ frame }) => {
 // ─────────────────────────────────────────────
 // ColorGradingOverlay: semi-transparent tint per style preset
 // ─────────────────────────────────────────────
+// ─────────────────────────────────────────────
+// FilmGrain: shifts an SVG turbulence noise on every frame
+// ─────────────────────────────────────────────
+const FilmGrain: React.FC = () => {
+  const frame = useCurrentFrame();
+  const seed = frame % 100;
+
+  return (
+    <AbsoluteFill style={{ pointerEvents: "none" }}>
+      <svg style={{ width: "100%", height: "100%", opacity: 0.08 }}>
+        <filter id="noiseFilter">
+          <feTurbulence
+            type="fractalNoise"
+            baseFrequency="0.65"
+            numOctaves="3"
+            stitchTiles="stitch"
+            seed={seed}
+          />
+          <feColorMatrix type="matrix" values="0 0 0 0 0   0 0 0 0 0   0 0 0 0 0  0 0 0 0.45 0" />
+        </filter>
+        <rect width="100%" height="100%" filter="url(#noiseFilter)" />
+      </svg>
+    </AbsoluteFill>
+  );
+};
+
+// ─────────────────────────────────────────────
+// ColorGradingOverlay: semi-transparent tint per style preset
+// ─────────────────────────────────────────────
 const ColorGradingOverlay: React.FC<{ stylePresetName?: string }> = ({ stylePresetName }) => {
   if (stylePresetName === "tech_history_fast") {
     // Cool blue-teal grade
@@ -319,6 +351,30 @@ const ColorGradingOverlay: React.FC<{ stylePresetName?: string }> = ({ stylePres
         style={{
           background: "linear-gradient(160deg, rgba(14,30,60,0.18) 0%, rgba(0,40,60,0.12) 100%)",
           mixBlendMode: "multiply",
+          pointerEvents: "none",
+        }}
+      />
+    );
+  }
+  if (stylePresetName === "horror_dark") {
+    // Moody dark red and deep purple shadows
+    return (
+      <AbsoluteFill
+        style={{
+          background: "linear-gradient(160deg, rgba(40,0,10,0.22) 0%, rgba(15,0,30,0.28) 100%)",
+          mixBlendMode: "multiply",
+          pointerEvents: "none",
+        }}
+      />
+    );
+  }
+  if (stylePresetName === "spirituality_calm") {
+    // Mystical forest-green and warm gold highlight grading
+    return (
+      <AbsoluteFill
+        style={{
+          background: "linear-gradient(135deg, rgba(6,78,59,0.14) 0%, rgba(245,158,11,0.08) 100%)",
+          mixBlendMode: "color-burn",
           pointerEvents: "none",
         }}
       />

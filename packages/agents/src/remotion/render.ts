@@ -104,8 +104,20 @@ export async function renderVideoWithRemotion(
       console.log(`        Total scenes: ${formattedScenes.length}`);
     }
 
-    const musicUrl = existsSync(join(outputRoot, "music", "bg_epic.mp3"))
-      ? `http://localhost:${assetServer.port}/music/bg_epic.mp3`
+    let musicFilename = "history.mp3";
+    if (stylePresetName === "horror_dark") {
+      musicFilename = "horror.mp3";
+    } else if (stylePresetName === "spirituality_calm") {
+      musicFilename = "spirituality.mp3";
+    }
+
+    let selectedMusic = musicFilename;
+    if (!existsSync(join(outputRoot, "music", selectedMusic))) {
+      selectedMusic = "bg_epic.mp3";
+    }
+
+    const musicUrl = existsSync(join(outputRoot, "music", selectedMusic))
+      ? `http://localhost:${assetServer.port}/music/${selectedMusic}`
       : undefined;
 
     const inputProps = {

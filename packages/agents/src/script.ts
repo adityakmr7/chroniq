@@ -65,7 +65,7 @@ Hook Formula to use:
 ${hookFormula}
 
 Script Requirements:
-1. LENGTH: ${isShort ? "110-130 words total (strictly under 60 seconds, this is a Short)" : "380-440 words total (this is a 3-minute story)"}.
+1. LENGTH: ${isShort ? "110-130 words total (strictly under 60 seconds, this is a Short)" : "1100-1300 words total (strictly over 8 minutes, this is a long-form video)"}.
 2. HOOK (first 1-2 sentences): Must immediately create dread. Use silence, darkness, wrongness. The viewer must feel unsafe.
 3. BODY: Build tension with slow-burn pacing. Use micro-cliffhangers every 2-3 sentences:
    - "And then the lights went out."
@@ -111,7 +111,7 @@ Scriptwriting formula to use for the HOOK:
 ${hookFormula}
 
 Script Requirements:
-1. LENGTH: ${isShort ? "110-130 words total (strictly under 60 seconds, this is a Short)" : "380-440 words total (this is a 3-minute long-form video)"}.
+1. LENGTH: ${isShort ? "110-130 words total (strictly under 60 seconds, this is a Short)" : "1100-1300 words total (strictly over 8 minutes, this is a long-form video)"}.
 2. HOOK (first 1-2 sentences): Must be a shocking question OR a provocative claim that creates an immediate curiosity gap. Never start with a plain statement. Must grab attention in the first 5 words.
 3. BODY: Tell the story with RETENTION LOOPS every 8-10 words. Use phrases like:
    - "But here's the twist nobody talks about..."

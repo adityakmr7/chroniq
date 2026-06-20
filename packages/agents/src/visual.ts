@@ -38,8 +38,8 @@ Rules for Scene Generation:
 1. Divide the video into consecutive scenes.
 2. The first scene must start at timestamp 0.
 3. The sum of all scene durations MUST exactly equal ${totalDuration.toFixed(2)} seconds.
-4. Each scene duration should be: ${isShort ? "strictly between 1.5 and 2.5 seconds (so there are more cuts and the pacing is extremely fast and engaging)" : "between 3.0 and 6.0 seconds"}.
-5. Provide a detailed, highly cinematic, photographic image prompt (imagePrompt) for each scene. The style should be documentary-style, dramatic, with high contrast. Use descriptive details rather than buzzwords.
+4. Each scene duration should be: ${isShort ? "strictly between 1.5 and 2.5 seconds (so there are more cuts and the pacing is extremely fast and engaging)" : "between 12.0 and 20.0 seconds"}.
+5. Provide a detailed, highly cinematic, photographic image prompt (imagePrompt) for each scene. The style MUST be dark-niche documentary photography (e.g. vintage film grain, 35mm photo, moody volumetric lighting, historical archive photo, high-detail documentary style, cinematic color grading). Use specific descriptive details of subjects, environment, and textures rather than generic buzzwords.
 6. The scenes must follow the chronological flow of the script.
 7. The imagePrompts should generate images suited for a ${isShort ? "9:16 vertical" : "16:9 horizontal"} aspect ratio.
 8. Use sceneType to create editorial variety. Pick one of: "image", "headline", "stat", "quote", "timeline", "comparison".

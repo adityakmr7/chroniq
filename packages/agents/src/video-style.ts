@@ -1,6 +1,6 @@
 export type SceneType = "image" | "headline" | "stat" | "quote" | "timeline" | "comparison";
 export type MotionStyle = "zoom-in" | "zoom-out" | "pan-left" | "pan-right" | "pan-up";
-export type VideoStylePresetName = "business_documentary_dark" | "tech_history_fast" | "horror_dark";
+export type VideoStylePresetName = "business_documentary_dark" | "tech_history_fast" | "horror_dark" | "spirituality_calm";
 
 export interface StyledScene {
   filename: string;
@@ -60,6 +60,18 @@ const PRESETS: Record<VideoStylePresetName, VideoStylePreset> = {
     wordsPerLineShort: 2,
     shortCaptionBottom: "38%",
     titleBackground: "linear-gradient(135deg, rgba(30,0,0,0.92), rgba(60,0,0,0.60))",
+  },
+  spirituality_calm: {
+    name: "spirituality_calm",
+    accentColor: "#10B981",          // emerald green
+    secondaryAccent: "#F59E0B",      // warm amber/gold
+    captionActiveColor: "#6EE7B7",   // soft mint green
+    captionTextColor: "#F9FAFB",     // off-white
+    captionBackground: "rgba(6, 78, 59, 0.25)",
+    vignetteStrength: 0.75,          // soft, tranquil vignette
+    wordsPerLineShort: 2,
+    shortCaptionBottom: "40%",
+    titleBackground: "linear-gradient(135deg, rgba(6,78,59,0.85), rgba(120,110,60,0.50))",
   },
 };
 

@@ -148,7 +148,10 @@ async function processGenerateJob(job: Job) {
       // ── REAL PIPELINE ──
       topic = { title: video.title, category: video.topic, estimatedViews: 100000, angle: "Visualizing the story." };
 
-      const isHorror = (video.topic || "").includes("Horror Stories");
+      const topicStr = video.topic || "";
+      const isHorror = topicStr.includes("Horror Stories");
+      const isSpirituality = topicStr.includes("Spirituality");
+      const voiceTone: "dramatic" | "calm" | "energetic" = isSpirituality ? "calm" : "dramatic";
 
       if (video.use_custom_script) {
         const rawScript = video.custom_script || "";
@@ -170,7 +173,7 @@ async function processGenerateJob(job: Job) {
             cta: parsed.cta,
             full: parsed.full,
             wordCount: parsed.wordCount,
-            voiceTone: isHorror ? "dramatic" : "calm",
+            voiceTone,
           };
           // Save scenes for later (we'll process timing after we get audio duration)
           (job.data as any).parsedScenes = parsed.scenes;
@@ -188,7 +191,7 @@ async function processGenerateJob(job: Job) {
             cta: "",
             full: rawScript,
             wordCount: rawScript.split(/\s+/).filter(Boolean).length,
-            voiceTone: isHorror ? "dramatic" : "calm",
+            voiceTone,
           };
         }
       } else {
@@ -425,8 +428,17 @@ async function processRenderJob(job: Job) {
     await updateVideoStatus(videoId, "rendering_video");
     await job.updateProgress(20);
 
-    const isHorror = (video.topic || "").includes("Horror Stories");
-    const stylePreset = isHorror ? "horror_dark" : (process.env.VIDEO_STYLE || "business_documentary_dark");
+    const topicStr = video.topic || "";
+    const isHorror = topicStr.includes("Horror Stories");
+    const isSpirituality = topicStr.includes("Spirituality");
+    let stylePreset = "business_documentary_dark";
+    if (isHorror) {
+      stylePreset = "horror_dark";
+    } else if (isSpirituality) {
+      stylePreset = "spirituality_calm";
+    } else {
+      stylePreset = process.env.VIDEO_STYLE || "business_documentary_dark";
+    }
 
     const finalVideoName = "final.mp4";
     await composeVideo(outputDir, "narration.mp3", sceneInputs, alignments, finalVideoName, {
