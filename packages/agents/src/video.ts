@@ -16,7 +16,7 @@ export async function composeVideo(
   scenes: VideoSceneInput[],
   alignments: WordAlignment[],
   outputFilename: string,
-  options?: { enableZoom?: boolean; isShort?: boolean; stylePreset?: string; title?: string; branding?: any }
+  options?: { enableZoom?: boolean; isShort?: boolean; stylePreset?: string; title?: string; branding?: any; captionsEnabled?: boolean }
 ): Promise<void> {
   const isShort = options?.isShort !== false;
   console.log(`     🎥 Composing video using Remotion...`);
@@ -30,6 +30,7 @@ export async function composeVideo(
     outputFilename,
     options?.stylePreset,
     options?.title,
-    options?.branding
+    options?.branding,
+    options?.captionsEnabled
   );
 }

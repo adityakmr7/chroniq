@@ -182,6 +182,9 @@ async function startServer() {
             ttsProvider?: string;
             voiceId?: string;
             language?: string;
+            useCustomScript?: boolean;
+            customScript?: string;
+            captionsEnabled?: boolean;
           };
 
           if (!body.title || !body.topic) {
@@ -196,6 +199,9 @@ async function startServer() {
           const ttsProvider = body.ttsProvider || "local";
           const voiceId = body.voiceId || null;
           const language = body.language || "en";
+          const useCustomScript = body.useCustomScript ?? false;
+          const customScript = body.customScript || null;
+          const captionsEnabled = body.captionsEnabled ?? true;
           
           const video = await createVideo(
             body.title,
@@ -204,7 +210,10 @@ async function startServer() {
             videoType,
             ttsProvider,
             voiceId,
-            language
+            language,
+            useCustomScript,
+            customScript,
+            captionsEnabled
           );
 
           // Push job to BullMQ queue

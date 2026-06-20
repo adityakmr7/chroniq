@@ -18,6 +18,9 @@ export interface Video {
   language?: string | null;       // 'en' | 'hi' etc.
   youtube_video_id?: string | null;
   thumbnail_variants?: string | null;
+  use_custom_script?: boolean | null;  // skip AI script generation
+  custom_script?: string | null;       // user-provided narration text
+  captions_enabled?: boolean | null;   // show/hide subtitles in rendered video
   created_at: Date;
 }
 
@@ -160,6 +163,11 @@ export async function initDatabase() {
   await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS youtube_video_id TEXT;`;
   await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS thumbnail_variants TEXT;`;
 
+  // Custom script + caption toggle columns
+  await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS use_custom_script BOOLEAN DEFAULT FALSE;`;
+  await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS custom_script TEXT;`;
+  await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS captions_enabled BOOLEAN DEFAULT TRUE;`;
+
   console.log("✅ Database schema initialized successfully.");
 }
 
@@ -170,11 +178,14 @@ export async function createVideo(
   videoType = "short",
   ttsProvider = "local",
   voiceId: string | null = null,
-  language = "en"
+  language = "en",
+  useCustomScript = false,
+  customScript: string | null = null,
+  captionsEnabled = true
 ): Promise<Video> {
   const [video] = await sql<Video[]>`
-    INSERT INTO videos (title, topic, status, video_type, tts_provider, voice_id, language)
-    VALUES (${title}, ${topic}, ${status}, ${videoType}, ${ttsProvider}, ${voiceId}, ${language})
+    INSERT INTO videos (title, topic, status, video_type, tts_provider, voice_id, language, use_custom_script, custom_script, captions_enabled)
+    VALUES (${title}, ${topic}, ${status}, ${videoType}, ${ttsProvider}, ${voiceId}, ${language}, ${useCustomScript}, ${customScript}, ${captionsEnabled})
     RETURNING *
   `;
   return video;

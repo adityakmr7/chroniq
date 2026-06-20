@@ -58,7 +58,8 @@ export async function renderVideoWithRemotion(
   outputFilename: string,
   stylePresetName = process.env.VIDEO_STYLE || "business_documentary_dark",
   title?: string,
-  branding?: any
+  branding?: any,
+  captionsEnabled = true
 ): Promise<void> {
   console.log("     🎬 Bundling Remotion video project...");
   const entryPoint = join(import.meta.dir, "entry.tsx");
@@ -116,6 +117,7 @@ export async function renderVideoWithRemotion(
       stylePresetName,
       title,
       branding,
+      captionsEnabled,
     };
 
 

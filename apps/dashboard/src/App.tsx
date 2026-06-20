@@ -15,6 +15,9 @@ interface Video {
   language?: string | null;
   youtube_video_id?: string | null;
   thumbnail_variants?: string | null;
+  use_custom_script?: boolean | null;
+  custom_script?: string | null;
+  captions_enabled?: boolean | null;
   created_at: string;
 }
 
@@ -1384,6 +1387,9 @@ export default function App() {
   const [videoType, setVideoType] = useState("short");
   const [mock, setMock] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [useCustomScript, setUseCustomScript] = useState(false);
+  const [customScript, setCustomScript] = useState("");
+  const [captionsEnabled, setCaptionsEnabled] = useState(true);
 
   // New voice states for video creator
   const [voiceCatalog, setVoiceCatalog] = useState<any>(null);
@@ -1564,23 +1570,48 @@ export default function App() {
 
   const handleQueueVideo = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!title.trim()) return;
+    let finalTitle = title.trim();
+    if (useCustomScript && !finalTitle && customScript.trim()) {
+      // Try to extract title from custom script e.g. "Title: The Shadows of Bhangarh"
+      const match = customScript.match(/Title:\s*([^\n]+)/i);
+      if (match && match[1]) {
+        finalTitle = match[1].trim();
+      } else {
+        // Fallback to first 5 words
+        finalTitle = customScript.trim().split(/\s+/).slice(0, 5).join(" ");
+      }
+    }
+
+    if (!finalTitle) {
+      alert("Please enter a Video Title or paste a script that starts with 'Title: [Your Title]'");
+      return;
+    }
+
     setIsSubmitting(true);
     try {
       const res = await fetch(`${API_BASE}/api/videos`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          title: title.trim(),
+          title: finalTitle,
           topic,
           mock,
           videoType,
           ttsProvider,
           voiceId,
           language,
+          useCustomScript,
+          customScript: useCustomScript ? customScript : null,
+          captionsEnabled,
         }),
       });
-      if (res.ok) { setTitle(""); fetchVideos(); fetchQueueStats(); }
+      if (res.ok) {
+        setTitle("");
+        setCustomScript("");
+        setUseCustomScript(false);
+        fetchVideos();
+        fetchQueueStats();
+      }
     } finally { setIsSubmitting(false); }
   };
 
@@ -1790,6 +1821,7 @@ export default function App() {
                 <option>Business Case Studies</option>
                 <option>Historical Events</option>
                 <option>Forgotten Stories</option>
+                <option>Horror Stories 🎃</option>
               </select>
             </div>
             <div className="form-group">
@@ -1802,12 +1834,75 @@ export default function App() {
             <div className="form-group">
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                 <label>Video Title / Idea</label>
-                <button type="button" onClick={handleGenerateTopicSuggestion} style={{ background: "none", border: "none", color: "hsl(var(--accent-purple))", fontSize: "0.75rem", fontWeight: 600, cursor: "pointer" }}>
-                  💡 Generate Idea
-                </button>
+                {!useCustomScript && (
+                  <button type="button" onClick={handleGenerateTopicSuggestion} style={{ background: "none", border: "none", color: "hsl(var(--accent-purple))", fontSize: "0.75rem", fontWeight: 600, cursor: "pointer" }}>
+                    💡 Generate Idea
+                  </button>
+                )}
               </div>
-              <input type="text" className="input-text" placeholder="e.g. Why Nokia Lost Everything" value={title} onChange={(e) => setTitle(e.target.value)} required />
+              <input 
+                type="text" 
+                className="input-text" 
+                placeholder={useCustomScript ? "e.g. The Shadows of Bhangarh (Optional - script title will be used if empty)" : "e.g. Why Nokia Lost Everything"} 
+                value={title} 
+                onChange={(e) => setTitle(e.target.value)} 
+                required={!useCustomScript} 
+              />
             </div>
+
+            {/* AI Script / Custom Script Toggle */}
+            <div style={{ display: "flex", background: "rgba(255,255,255,0.04)", border: "1px solid hsl(var(--border))", borderRadius: "8px", padding: "3px", gap: "2px" }}>
+              <button
+                type="button"
+                onClick={() => setUseCustomScript(false)}
+                style={{
+                  flex: 1,
+                  padding: "0.4rem",
+                  fontSize: "0.75rem",
+                  fontWeight: 700,
+                  borderRadius: "6px",
+                  border: "none",
+                  background: !useCustomScript ? "linear-gradient(135deg, hsl(var(--accent-purple)), #6366f1)" : "none",
+                  color: "#fff",
+                  cursor: "pointer",
+                  transition: "background 0.2s"
+                }}
+              >
+                ✨ AI Script
+              </button>
+              <button
+                type="button"
+                onClick={() => setUseCustomScript(true)}
+                style={{
+                  flex: 1,
+                  padding: "0.4rem",
+                  fontSize: "0.75rem",
+                  fontWeight: 700,
+                  borderRadius: "6px",
+                  border: "none",
+                  background: useCustomScript ? "linear-gradient(135deg, hsl(var(--accent-purple)), #6366f1)" : "none",
+                  color: "#fff",
+                  cursor: "pointer",
+                  transition: "background 0.2s"
+                }}
+              >
+                ✏️ Custom Script
+              </button>
+            </div>
+
+            {useCustomScript && (
+              <div className="form-group">
+                <label>Paste Custom Script Narration</label>
+                <textarea
+                  className="input-text"
+                  placeholder="Paste your custom narration script here. Word count should be strictly under 130 words for Shorts (~50s) or 400 words for long-form."
+                  value={customScript}
+                  onChange={(e) => setCustomScript(e.target.value)}
+                  style={{ minHeight: "100px", padding: "0.5rem", fontSize: "0.75rem", resize: "vertical", fontFamily: "inherit" }}
+                  required
+                />
+              </div>
+            )}
 
             {/* Language Selection */}
             <div className="form-group">
@@ -1839,13 +1934,52 @@ export default function App() {
               </select>
             </div>
 
+            {/* Captions Toggle Switch */}
+            <div className="form-group" style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", display: "flex", background: "rgba(255,255,255,0.02)", border: "1px solid hsl(var(--border))", padding: "0.75rem", borderRadius: "8px" }}>
+              <span style={{ fontSize: "0.8rem", fontWeight: 600, display: "flex", alignItems: "center", gap: "0.4rem" }}>
+                📺 Show Captions
+              </span>
+              <label className="switch" style={{ position: "relative", display: "inline-block", width: "42px", height: "22px" }}>
+                <input 
+                  type="checkbox" 
+                  checked={captionsEnabled} 
+                  onChange={(e) => setCaptionsEnabled(e.target.checked)}
+                  style={{ opacity: 0, width: 0, height: 0 }} 
+                />
+                <span className="slider" style={{
+                  position: "absolute",
+                  cursor: "pointer",
+                  top: 0, left: 0, right: 0, bottom: 0,
+                  backgroundColor: captionsEnabled ? "hsl(var(--accent-purple))" : "rgba(255,255,255,0.15)",
+                  transition: "0.3s",
+                  borderRadius: "34px",
+                  boxShadow: captionsEnabled ? "0 0 8px hsl(var(--accent-purple))" : "none",
+                }}>
+                  <span className="slider-knob" style={{
+                    position: "absolute",
+                    height: "16px",
+                    width: "16px",
+                    left: captionsEnabled ? "22px" : "3px",
+                    bottom: "3px",
+                    backgroundColor: "#fff",
+                    transition: "0.3s",
+                    borderRadius: "50%",
+                  }} />
+                </span>
+              </label>
+            </div>
+
             {/* HITL info box */}
             <div style={{ padding: "0.75rem", background: "rgba(249,115,22,0.08)", border: "1px solid rgba(249,115,22,0.2)", borderRadius: "8px", fontSize: "0.75rem", color: "hsl(var(--text-muted))", lineHeight: 1.5 }}>
               👀 <strong style={{ color: "#f97316" }}>Human-in-the-Loop enabled.</strong> The pipeline will pause after generation for your review before rendering begins.
             </div>
 
 
-            <button type="submit" className="btn" disabled={isSubmitting || !title.trim()}>
+            <button 
+              type="submit" 
+              className="btn" 
+              disabled={isSubmitting || (!title.trim() && (!useCustomScript || !customScript.trim()))}
+            >
               {isSubmitting ? "Queueing..." : "⚡ Queue Video Job"}
             </button>
           </form>

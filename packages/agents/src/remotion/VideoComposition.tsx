@@ -42,6 +42,7 @@ export interface VideoCompositionProps {
     outroMessage: string;
     logoEmoji: string;
   };
+  captionsEnabled?: boolean;
 }
 
 // Ken Burns variations — alternating per scene for visual variety
@@ -56,6 +57,7 @@ export const VideoComposition: React.FC<VideoCompositionProps> = ({
   stylePresetName,
   title,
   branding,
+  captionsEnabled = true,
 }) => {
   const frame = useCurrentFrame();
   const { fps, durationInFrames } = useVideoConfig();
@@ -147,10 +149,12 @@ export const VideoComposition: React.FC<VideoCompositionProps> = ({
       {musicUrl && <MusicTrack musicUrl={musicUrl} alignments={alignments} frame={frame} fps={fps} hookFrames={HOOK_FRAMES} />}
 
       {/* ── Captions Overlay ── */}
-      <AbsoluteFill style={{ pointerEvents: "none" }}>
-        {/* Pass hookFrames so captions compare against audio-relative time, not composition time */}
-        <CaptionsOverlay alignments={alignments} frame={frame} fps={fps} isShort={isShort} style={style} scenes={scenes} sceneFrames={sceneFrames} hookFrames={HOOK_FRAMES} />
-      </AbsoluteFill>
+      {captionsEnabled !== false && (
+        <AbsoluteFill style={{ pointerEvents: "none" }}>
+          {/* Pass hookFrames so captions compare against audio-relative time, not composition time */}
+          <CaptionsOverlay alignments={alignments} frame={frame} fps={fps} isShort={isShort} style={style} scenes={scenes} sceneFrames={sceneFrames} hookFrames={HOOK_FRAMES} />
+        </AbsoluteFill>
+      )}
 
       {/* ── Bottom vignette gradient ── */}
       <AbsoluteFill

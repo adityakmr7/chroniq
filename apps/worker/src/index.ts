@@ -6,6 +6,7 @@ import {
   generateTopic,
   researchTopic,
   generateScript,
+  parseScreenplay,
   generateVoice,
   generateScenes,
   downloadImage,
@@ -147,15 +148,60 @@ async function processGenerateJob(job: Job) {
       // ── REAL PIPELINE ──
       topic = { title: video.title, category: video.topic, estimatedViews: 100000, angle: "Visualizing the story." };
 
-      console.log(`   [Job ${job.id}] 📚 Researching...`);
-      await updateVideoStatus(videoId, "researching");
-      await job.updateProgress(15);
-      research = await researchTopic(topic);
+      const isHorror = (video.topic || "").includes("Horror Stories");
 
-      console.log(`   [Job ${job.id}] ✍️  Writing script...`);
-      await updateVideoStatus(videoId, "generating_script");
-      await job.updateProgress(30);
-      script = await generateScript(topic, research, isShort, video.language || "en");
+      if (video.use_custom_script) {
+        const rawScript = video.custom_script || "";
+        // Detect if script contains screenplay tags e.g. [Visual] or Act or Dialogue
+        const isScreenplay = /\[visual\]/i.test(rawScript) || /act\s+\d+/i.test(rawScript) || /narration:/i.test(rawScript);
+
+        if (isScreenplay) {
+          console.log(`   [Job ${job.id}] ✏️ Screenplay detected. Parsing visual cues & voiceover...`);
+          const parsed = await parseScreenplay(rawScript, isShort);
+          research = {
+            summary: video.topic || "Custom screenplay video.",
+            facts: [],
+            timeline: [],
+            sources: [],
+          };
+          script = {
+            hook: parsed.hook,
+            body: parsed.body,
+            cta: parsed.cta,
+            full: parsed.full,
+            wordCount: parsed.wordCount,
+            voiceTone: isHorror ? "dramatic" : "calm",
+          };
+          // Save scenes for later (we'll process timing after we get audio duration)
+          (job.data as any).parsedScenes = parsed.scenes;
+        } else {
+          console.log(`   [Job ${job.id}] ✏️ Using plain custom script. Skipping research & script generation...`);
+          research = {
+            summary: video.topic || "Custom script video.",
+            facts: [],
+            timeline: [],
+            sources: [],
+          };
+          script = {
+            hook: "",
+            body: "",
+            cta: "",
+            full: rawScript,
+            wordCount: rawScript.split(/\s+/).filter(Boolean).length,
+            voiceTone: isHorror ? "dramatic" : "calm",
+          };
+        }
+      } else {
+        console.log(`   [Job ${job.id}] 📚 Researching...`);
+        await updateVideoStatus(videoId, "researching");
+        await job.updateProgress(15);
+        research = await researchTopic(topic);
+
+        console.log(`   [Job ${job.id}] ✍️  Writing script...`);
+        await updateVideoStatus(videoId, "generating_script");
+        await job.updateProgress(30);
+        script = await generateScript(topic, research, isShort, video.language || "en", video.topic || "");
+      }
 
       console.log(`   [Job ${job.id}] 🎙️  Synthesizing voice...`);
       await updateVideoStatus(videoId, "generating_voice");
@@ -174,7 +220,41 @@ async function processGenerateJob(job: Job) {
       console.log(`   [Job ${job.id}] 🎨 Planning visuals...`);
       await updateVideoStatus(videoId, "generating_visuals");
       await job.updateProgress(60);
-      scenes = await generateScenes(script, research, totalDuration, isShort);
+
+      const parsedScenes = (job.data as any).parsedScenes;
+      if (parsedScenes && parsedScenes.length > 0) {
+        console.log(`   [Job ${job.id}] 🎬 Scaling screenplay timing across ${parsedScenes.length} scenes...`);
+        const totalWeight = parsedScenes.reduce((sum: number, s: any) => sum + s.duration, 0) || 1;
+        let currentTimestamp = 0;
+
+        scenes = parsedScenes.map((scene: any, i: number) => {
+          const weight = scene.duration; // weight is stored in duration
+          let duration = (weight / totalWeight) * totalDuration;
+          duration = Math.round(duration * 100) / 100;
+          const timestamp = Math.round(currentTimestamp * 100) / 100;
+          currentTimestamp += duration;
+
+          return {
+            timestamp,
+            duration,
+            imagePrompt: scene.imagePrompt,
+            searchQuery: scene.searchQuery,
+            sceneType: scene.sceneType,
+            headline: scene.headline,
+            emphasis: scene.emphasis,
+            motion: scene.motion,
+          };
+        });
+
+        // Timing adjustment for last scene
+        if (scenes.length > 0) {
+          const lastIdx = scenes.length - 1;
+          const sumOfPrev = scenes.slice(0, lastIdx).reduce((sum, s) => sum + s.duration, 0);
+          scenes[lastIdx].duration = Math.round((totalDuration - sumOfPrev) * 100) / 100;
+        }
+      } else {
+        scenes = await generateScenes(script, research, totalDuration, isShort);
+      }
 
       ytMetadata = await generateYouTubeMetadata(topic, script, research, isShort);
       thumbnailPrompt = "Dramatic documentary cover art.";
@@ -256,7 +336,13 @@ async function processGenerateJob(job: Job) {
 
     // Save youtube metadata for render phase
     const metaPath = join(outputDir, "youtube_meta.json");
-    await Bun.write(metaPath, JSON.stringify({ ytMetadata, thumbnailPrompt, isShort, totalDuration }));
+    await Bun.write(metaPath, JSON.stringify({ 
+      ytMetadata, 
+      thumbnailPrompt, 
+      isShort, 
+      totalDuration,
+      captionsEnabled: video.captions_enabled ?? true
+    }));
 
     // Generate caption files
     console.log(`   [Job ${job.id}] ✍️  Compiling captions...`);
@@ -308,9 +394,9 @@ async function processRenderJob(job: Job) {
     const metaPath = join(outputDir, "youtube_meta.json");
     const meta = existsSync(metaPath)
       ? JSON.parse(await Bun.file(metaPath).text())
-      : { ytMetadata: null, isShort: true, totalDuration: 30 };
+      : { ytMetadata: null, isShort: true, totalDuration: 30, captionsEnabled: true };
 
-    const { ytMetadata, isShort, totalDuration } = meta;
+    const { ytMetadata, isShort, totalDuration, captionsEnabled = true } = meta;
 
     // Load scene manifest
     const sceneManifest: SceneManifest[] = video.scene_manifest
@@ -339,12 +425,16 @@ async function processRenderJob(job: Job) {
     await updateVideoStatus(videoId, "rendering_video");
     await job.updateProgress(20);
 
+    const isHorror = (video.topic || "").includes("Horror Stories");
+    const stylePreset = isHorror ? "horror_dark" : (process.env.VIDEO_STYLE || "business_documentary_dark");
+
     const finalVideoName = "final.mp4";
     await composeVideo(outputDir, "narration.mp3", sceneInputs, alignments, finalVideoName, {
       isShort,
-      stylePreset: process.env.VIDEO_STYLE || "business_documentary_dark",
+      stylePreset,
       title: video.title || undefined,
       branding,
+      captionsEnabled,
     });
     await addAsset(videoId, "video", join(outputDir, finalVideoName));
 

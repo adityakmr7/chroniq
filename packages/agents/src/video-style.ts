@@ -1,6 +1,6 @@
 export type SceneType = "image" | "headline" | "stat" | "quote" | "timeline" | "comparison";
 export type MotionStyle = "zoom-in" | "zoom-out" | "pan-left" | "pan-right" | "pan-up";
-export type VideoStylePresetName = "business_documentary_dark" | "tech_history_fast";
+export type VideoStylePresetName = "business_documentary_dark" | "tech_history_fast" | "horror_dark";
 
 export interface StyledScene {
   filename: string;
@@ -48,6 +48,18 @@ const PRESETS: Record<VideoStylePresetName, VideoStylePreset> = {
     wordsPerLineShort: 2,
     shortCaptionBottom: "40%",
     titleBackground: "linear-gradient(135deg, rgba(15,23,42,0.86), rgba(30,41,59,0.50))",
+  },
+  horror_dark: {
+    name: "horror_dark",
+    accentColor: "#DC2626",          // blood red
+    secondaryAccent: "#7C3AED",      // eerie purple
+    captionActiveColor: "#FCA5A5",   // pale red — glows in the dark
+    captionTextColor: "#F5F5F5",     // ghost white
+    captionBackground: "rgba(60, 0, 0, 0.30)",
+    vignetteStrength: 0.96,          // heavy vignette for claustrophobic feel
+    wordsPerLineShort: 2,
+    shortCaptionBottom: "38%",
+    titleBackground: "linear-gradient(135deg, rgba(30,0,0,0.92), rgba(60,0,0,0.60))",
   },
 };
 

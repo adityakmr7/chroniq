@@ -4,8 +4,8 @@ export type { Topic } from "./topic.ts";
 export { researchTopic } from "./research.ts";
 export type { Research } from "./research.ts";
 
-export { generateScript } from "./script.ts";
-export type { Script } from "./script.ts";
+export { generateScript, parseScreenplay } from "./script.ts";
+export type { Script, ParsedScreenplay } from "./script.ts";
 
 export { generateVoice, alignCharactersToWords, ALL_VOICES } from "./voice.ts";
 export type { WordAlignment, VoiceGenerationResult } from "./voice.ts";
