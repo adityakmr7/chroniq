@@ -17,6 +17,10 @@ import {
   getAccessToken,
   uploadVideo,
   uploadThumbnail,
+  normalizeMotionStyle,
+  normalizeSceneType,
+  settingsToBranding,
+  refreshAndFetchAllStats,
 } from "@chroniq/agents";
 import type { WordAlignment, Scene, YouTubeMetadata } from "@chroniq/agents";
 import {
@@ -26,6 +30,14 @@ import {
   saveSceneManifest,
   addAsset,
   getVideoDetails,
+  getAllChannelSettings,
+  setVideoYouTubeId,
+  getPendingSchedules,
+  markSchedulePublished,
+  markScheduleFailed,
+  getAllSchedules,
+  getVideosWithYouTubeIds,
+  upsertVideoAnalytics,
 } from "@chroniq/db";
 import type { SceneManifest } from "@chroniq/db";
 import ffmpegInstaller from "@ffmpeg-installer/ffmpeg";
@@ -106,6 +118,7 @@ async function processGenerateJob(job: Job) {
         cta: "Would you have bought Netflix for fifty million? Let me know in the comments.",
         full: "In 2000, Netflix offered to sell itself to Blockbuster for fifty million dollars. Blockbuster's CEO literally laughed them out of the room.\n\nAt its peak, Blockbuster had nine thousand stores. But their model relied on late fees. Netflix had no late fees. Blockbuster ignored them. Filed bankruptcy in 2010.\n\nWould you have bought Netflix for fifty million? Let me know in the comments.",
         wordCount: 80,
+        voiceTone: "dramatic" as const,
       };
 
       totalDuration = 15.0;
@@ -151,7 +164,8 @@ async function processGenerateJob(job: Job) {
         script.full,
         true,
         video.tts_provider || undefined,
-        video.voice_id || undefined
+        video.voice_id || undefined,
+        script.voiceTone
       );
       audioData = voiceResult.audioBuffer;
       alignments = voiceResult.alignments || [];
@@ -187,7 +201,7 @@ async function processGenerateJob(job: Job) {
         const imgRes = await fetch(`https://picsum.photos/${resolution}?sig=${i}`);
         await Bun.write(scenePath, await imgRes.arrayBuffer());
       } else {
-        await downloadImage(scene.searchQuery || scene.imagePrompt, scenePath, isShort);
+        await downloadImage(scene.imagePrompt, scenePath, isShort, scene.searchQuery);
       }
 
       await addAsset(videoId, "image", scenePath);
@@ -197,6 +211,10 @@ async function processGenerateJob(job: Job) {
         duration: scene.duration,
         imagePrompt: scene.imagePrompt,
         searchQuery: scene.searchQuery,
+        sceneType: scene.sceneType,
+        headline: scene.headline,
+        emphasis: scene.emphasis,
+        motion: scene.motion,
       });
     }
 
@@ -302,11 +320,19 @@ async function processRenderJob(job: Job) {
     const sceneInputs = sceneManifest.map((s) => ({
       filename: s.filename,
       duration: s.duration,
+      sceneType: normalizeSceneType(s.sceneType),
+      headline: s.headline,
+      emphasis: s.emphasis,
+      motion: normalizeMotionStyle(s.motion, s.index),
     }));
 
     // Re-read the (potentially edited) script from DB
     const updatedDetails = await getVideoDetails(videoId);
     const scriptContent = updatedDetails?.script?.content || "";
+
+    // Fetch channel branding settings
+    const settings = await getAllChannelSettings();
+    const branding = settingsToBranding(settings);
 
     // ── Render Video ──
     console.log(`   [Job ${job.id}] 🎥 Rendering video via Remotion...`);
@@ -314,32 +340,50 @@ async function processRenderJob(job: Job) {
     await job.updateProgress(20);
 
     const finalVideoName = "final.mp4";
-    await composeVideo(outputDir, "narration.mp3", sceneInputs, alignments, finalVideoName, { isShort });
+    await composeVideo(outputDir, "narration.mp3", sceneInputs, alignments, finalVideoName, {
+      isShort,
+      stylePreset: process.env.VIDEO_STYLE || "business_documentary_dark",
+      title: video.title || undefined,
+      branding,
+    });
     await addAsset(videoId, "video", join(outputDir, finalVideoName));
 
     await job.updateProgress(80);
 
     // ── YouTube Upload ──
-    console.log(`   [Job ${job.id}] 🚀 Uploading to YouTube...`);
-    await updateVideoStatus(videoId, "publishing");
-    await job.updateProgress(90);
+    const schedules = await getAllSchedules();
+    const hasPendingSchedule = schedules.some(s => s.video_id === videoId && s.status === 'pending');
 
-    let youtubeUrl = "https://youtu.be/dQw4w9WgXcQ";
-    const clientId = process.env.YOUTUBE_CLIENT_ID;
-    const clientSecret = process.env.YOUTUBE_CLIENT_SECRET;
-    const refreshToken = process.env.YOUTUBE_REFRESH_TOKEN;
+    let youtubeUrl = "";
     const thumbnailPath = join(outputDir, "thumbnail.png");
 
-    if (clientId && clientSecret && refreshToken && ytMetadata) {
-      try {
-        const accessToken = await getAccessToken(clientId, clientSecret, refreshToken);
-        const ytId = await uploadVideo(accessToken, join(outputDir, finalVideoName), ytMetadata);
-        youtubeUrl = `https://youtu.be/${ytId}`;
-        await uploadThumbnail(accessToken, ytId, thumbnailPath);
-      } catch (err) {
-        console.error("   ❌ YouTube upload failed:", err);
+    if (hasPendingSchedule) {
+      console.log(`   ⏰ Video ${videoId} has a pending schedule. Skipping immediate YouTube upload.`);
+    } else {
+      console.log(`   [Job ${job.id}] 🚀 Uploading to YouTube immediately...`);
+      await updateVideoStatus(videoId, "publishing");
+      await job.updateProgress(90);
+
+      // Default fallback URL if upload credentials are not set
+      youtubeUrl = "https://youtu.be/dQw4w9WgXcQ";
+
+      const clientId = process.env.YOUTUBE_CLIENT_ID;
+      const clientSecret = process.env.YOUTUBE_CLIENT_SECRET;
+      const refreshToken = process.env.YOUTUBE_REFRESH_TOKEN;
+
+      if (clientId && clientSecret && refreshToken && ytMetadata) {
+        try {
+          const accessToken = await getAccessToken(clientId, clientSecret, refreshToken);
+          const ytId = await uploadVideo(accessToken, join(outputDir, finalVideoName), ytMetadata);
+          youtubeUrl = `https://youtu.be/${ytId}`;
+          await setVideoYouTubeId(videoId, ytId);
+          await uploadThumbnail(accessToken, ytId, thumbnailPath);
+        } catch (err) {
+          console.error("   ❌ YouTube upload failed:", err);
+        }
       }
     }
+
 
     // ── Auto-Cleanup: Remove intermediate files, keep final output ──
     console.log(`   [Job ${job.id}] 🧹 Cleaning up intermediate files...`);
@@ -384,6 +428,119 @@ async function cleanupIntermediateFiles(outputDir: string) {
   }
 }
 
+// ── Scheduler and Analytics sync loops ──────────────────────────────
+
+async function checkAndPublishSchedules() {
+  try {
+    const pending = await getPendingSchedules();
+    if (pending.length === 0) return;
+
+    console.log(`⏰ Found ${pending.length} pending schedules to publish.`);
+
+    const clientId = process.env.YOUTUBE_CLIENT_ID;
+    const clientSecret = process.env.YOUTUBE_CLIENT_SECRET;
+    const refreshToken = process.env.YOUTUBE_REFRESH_TOKEN;
+
+    if (!clientId || !clientSecret || !refreshToken) {
+      console.warn("⚠️ YouTube credentials not configured. Skipping scheduled publishes.");
+      return;
+    }
+
+    for (const item of pending) {
+      console.log(`⏰ Publishing scheduled video: "${item.video.title}" (ID: ${item.video_id})`);
+      
+      try {
+        const slug = slugify(item.video.title);
+        const outputDir = join(process.cwd(), "output", slug);
+        const finalVideoPath = join(outputDir, "final.mp4");
+        const thumbnailPath = join(outputDir, "thumbnail.png");
+
+        if (!existsSync(finalVideoPath)) {
+          throw new Error(`Video file final.mp4 not found at ${finalVideoPath}`);
+        }
+
+        // Read metadata from JSON file
+        const metaPath = join(outputDir, "youtube_meta.json");
+        if (!existsSync(metaPath)) {
+          throw new Error(`youtube_meta.json not found at ${metaPath}`);
+        }
+
+        const meta = JSON.parse(await Bun.file(metaPath).text());
+        const { ytMetadata } = meta;
+
+        if (!ytMetadata) {
+          throw new Error("YouTube metadata not found in youtube_meta.json");
+        }
+
+        // Update status to publishing
+        await updateVideoStatus(item.video_id, "publishing");
+
+        // Upload to YouTube
+        const accessToken = await getAccessToken(clientId, clientSecret, refreshToken);
+        const ytId = await uploadVideo(accessToken, finalVideoPath, ytMetadata);
+        const youtubeUrl = `https://youtu.be/${ytId}`;
+
+        await setVideoYouTubeId(item.video_id, ytId);
+        
+        if (existsSync(thumbnailPath)) {
+          await uploadThumbnail(accessToken, ytId, thumbnailPath);
+        }
+
+        // Update video and schedule status
+        await updateVideoStatus(item.video_id, "completed", item.video.duration || undefined, youtubeUrl);
+        await markSchedulePublished(item.id);
+        console.log(`✅ Successfully published scheduled video: "${item.video.title}"`);
+
+      } catch (err: any) {
+        console.error(`❌ Failed to publish schedule ${item.id}:`, err);
+        await markScheduleFailed(item.id, err.message || String(err));
+        await updateVideoStatus(item.video_id, "failed", undefined, undefined, `Schedule publish failed: ${err.message || err}`);
+      }
+    }
+  } catch (err) {
+    console.error("❌ Schedule check error:", err);
+  }
+}
+
+async function syncAllYouTubeAnalytics() {
+  console.log("📊 Syncing YouTube Analytics for all published videos...");
+  
+  try {
+    const videos = await getVideosWithYouTubeIds();
+    if (videos.length === 0) {
+      console.log("📊 No published videos with YouTube IDs found to sync.");
+      return;
+    }
+
+    const ids = videos.map(v => v.youtube_video_id).filter(Boolean) as string[];
+    console.log(`📊 Fetching stats for ${ids.length} videos from YouTube API...`);
+
+    const statsList = await refreshAndFetchAllStats(ids);
+    console.log(`📊 Fetched ${statsList.length} stats records from YouTube API.`);
+
+    for (const stats of statsList) {
+      const video = videos.find(v => v.youtube_video_id === stats.youtubeVideoId);
+      if (video) {
+        await upsertVideoAnalytics({
+          videoId: video.id,
+          youtubeVideoId: stats.youtubeVideoId,
+          views: stats.views,
+          likes: stats.likes,
+          comments: stats.comments,
+          ctr: stats.ctr,
+          avgViewDuration: stats.avgViewDuration,
+        });
+        console.log(`📊 Synced stats for "${video.title}": ${stats.views} views, ${stats.likes} likes, ${stats.comments} comments`);
+      }
+    }
+
+    console.log("📊 YouTube Analytics sync completed successfully.");
+
+  } catch (err: any) {
+    console.error("❌ YouTube Analytics sync failed:", err);
+  }
+}
+
 // ─────────────────────────────────────────────
 // Worker Boot
 // ─────────────────────────────────────────────
@@ -407,6 +564,17 @@ async function startWorker() {
   generateWorker.on("active", (job) => console.log(`📢 Processing job: ${job.name} (${job.id})`));
   generateWorker.on("completed", (job) => console.log(`🟢 Job ${job.name} (${job.id}) completed!`));
   generateWorker.on("failed", (job, err) => console.log(`🔴 Job ${job?.name} (${job?.id}) failed: ${err.message}`));
+
+  // Background Tasks
+  console.log("⏰ Scheduling background publish checker (every 60s)...");
+  setInterval(checkAndPublishSchedules, 60000);
+
+  console.log("📊 Scheduling background YouTube Analytics sync (every 60 mins)...");
+  setInterval(syncAllYouTubeAnalytics, 3600000);
+
+  // Run initial check and sync on boot
+  setTimeout(checkAndPublishSchedules, 5000);
+  setTimeout(syncAllYouTubeAnalytics, 10000);
 }
 
 startWorker();

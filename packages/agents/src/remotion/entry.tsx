@@ -16,6 +16,7 @@ const Root: React.FC = () => {
         audioUrl: "",
         alignments: [],
         isShort: true,
+        stylePresetName: "business_documentary_dark",
       }}
     />
   );

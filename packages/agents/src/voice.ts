@@ -187,19 +187,118 @@ export function alignCharactersToWords(
 }
 
 /**
- * Estimate word timestamps proportionally from total duration.
- * Used when TTS provider doesn't give per-word timing.
+ * Estimate word timestamps proportionally from total duration, factoring in punctuation pauses
+ * to prevent subtitles from drifting ahead during pauses.
  */
 export function estimateTimestamps(text: string, duration: number): WordAlignment[] {
   const words = text.split(/\s+/).filter(Boolean);
   if (words.length === 0) return [];
-  const avgWordDuration = duration / words.length;
 
-  return words.map((word, index) => ({
-    word,
-    start: Math.round(index * avgWordDuration * 100) / 100,
-    end: Math.round((index + 1) * avgWordDuration * 100) / 100,
-  }));
+  // Calculate weights for each word. Base weight is clean alphanumeric character length.
+  // Punctuation characters add pauses of varying lengths.
+  const weights = words.map(word => {
+    const baseWeight = Math.max(1, word.replace(/[^a-zA-Z0-9\u0900-\u097F]/g, "").length);
+    let pauseWeight = 0;
+
+    if (/[.,;:!?]$/.test(word)) {
+      const char = word[word.length - 1];
+      if (/[.,;:]/.test(char)) {
+        pauseWeight = 4; // Medium pause for comma/semicolon/colon
+      } else if (/[!?.]/.test(char)) {
+        pauseWeight = 8; // Longer pause for full stop/exclamation/question
+      }
+    }
+    
+    // Hindi full stop (danda) or ellipsis
+    if (word.includes("...") || word.includes("।")) {
+      pauseWeight = 8;
+    }
+
+    return {
+      word,
+      speakWeight: baseWeight,
+      pauseWeight: pauseWeight
+    };
+  });
+
+  const totalWeight = weights.reduce((sum, w) => sum + w.speakWeight + w.pauseWeight, 0);
+  const timePerWeight = duration / (totalWeight || 1);
+
+  const alignments: WordAlignment[] = [];
+  let currentTime = 0;
+
+  for (const w of weights) {
+    const speakDuration = w.speakWeight * timePerWeight;
+    const pauseDuration = w.pauseWeight * timePerWeight;
+
+    alignments.push({
+      word: w.word,
+      start: Math.round(currentTime * 100) / 100,
+      end: Math.round((currentTime + speakDuration) * 100) / 100
+    });
+
+    currentTime += speakDuration + pauseDuration;
+  }
+
+  return alignments;
+}
+
+/**
+ * Aligns the raw word timing events received from Microsoft Edge TTS with
+ * the original script words (which contains punctuation).
+ */
+export function alignMetadataToScript(
+  scriptText: string,
+  metadata: { word: string; start: number; end: number }[]
+): WordAlignment[] {
+  const scriptWords = scriptText.split(/\s+/).filter(Boolean);
+  if (metadata.length === 0) return [];
+  
+  const alignments: WordAlignment[] = [];
+  let metaIdx = 0;
+  
+  for (let i = 0; i < scriptWords.length; i++) {
+    const sWord = scriptWords[i];
+    let foundIdx = -1;
+    
+    // Scan ahead up to 5 metadata entries to find the corresponding spoken word
+    for (let j = metaIdx; j < Math.min(metaIdx + 5, metadata.length); j++) {
+      const sClean = sWord.toLowerCase().replace(/[^a-z0-9\u0900-\u097F]/g, "");
+      const mClean = metadata[j].word.toLowerCase().replace(/[^a-z0-9\u0900-\u097F]/g, "");
+      if (sClean === mClean || sClean.includes(mClean) || mClean.includes(sClean)) {
+        foundIdx = j;
+        break;
+      }
+    }
+    
+    if (foundIdx !== -1) {
+      // Use exact word timing from TTS boundary, but original script word (retaining commas, periods, etc.)
+      alignments.push({
+        word: sWord,
+        start: metadata[foundIdx].start,
+        end: metadata[foundIdx].end
+      });
+      metaIdx = foundIdx + 1;
+    } else if (metaIdx < metadata.length) {
+      // Sequential fallback
+      alignments.push({
+        word: sWord,
+        start: metadata[metaIdx].start,
+        end: metadata[metaIdx].end
+      });
+      metaIdx++;
+    } else {
+      // Last-resort fallback
+      const lastMeta = metadata[metadata.length - 1];
+      alignments.push({
+        word: sWord,
+        start: lastMeta.end,
+        end: lastMeta.end + 0.1
+      });
+    }
+  }
+  
+  return alignments;
 }
 
 /**
@@ -228,8 +327,8 @@ export async function extractAudioDuration(buffer: ArrayBuffer): Promise<number>
 // Provider: Edge TTS (Microsoft Azure, FREE)
 // Supports English + Hindi + 100+ other languages
 // ─────────────────────────────────────────────────────────────────────────────
-async function generateEdgeTTS(text: string, voice: string): Promise<VoiceGenerationResult> {
-  console.log(`     🎙️  Generating voice via Edge TTS (Voice: ${voice})...`);
+async function generateEdgeTTS(text: string, voice: string, rate = "+0%"): Promise<VoiceGenerationResult> {
+  console.log(`     🎙️  Generating voice via Edge TTS (Voice: ${voice}, Rate: ${rate})...`);
 
   const secMsGec = getSecMsGec();
   const connectionId = crypto.randomUUID().replaceAll('-', '');
@@ -237,6 +336,7 @@ async function generateEdgeTTS(text: string, voice: string): Promise<VoiceGenera
   const path = `/consumer/speech/synthesize/readaloud/edge/v1?TrustedClientToken=${TRUSTED_CLIENT_TOKEN}&Sec-MS-GEC=${secMsGec}&Sec-MS-GEC-Version=1-143.0.3650.75&ConnectionId=${connectionId}`;
 
   const audioChunks: Buffer[] = [];
+  const edgeAlignmentsRaw: { word: string; start: number; end: number }[] = [];
   
   await new Promise<void>((resolve, reject) => {
     const socket = tls.connect(443, 'speech.platform.bing.com', {
@@ -281,12 +381,12 @@ async function generateEdgeTTS(text: string, voice: string): Promise<VoiceGenera
             parser.add(remaining);
           }
           
-          // Send speech config
+          // Send speech config - request word boundary timing metadata from Azure
           const speechConfig = JSON.stringify({
             context: {
               synthesis: {
                 audio: {
-                  metadataoptions: { sentenceBoundaryEnabled: false, wordBoundaryEnabled: false },
+                  metadataoptions: { sentenceBoundaryEnabled: false, wordBoundaryEnabled: true },
                   outputFormat: 'audio-24khz-48kbitrate-mono-mp3'
                 }
               }
@@ -299,7 +399,7 @@ async function generateEdgeTTS(text: string, voice: string): Promise<VoiceGenera
           const isHindi = voice.startsWith("hi-");
           const lang = isHindi ? "hi-IN" : "en-US";
           const ssml = `<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='${lang}'>`
-            + `<voice name='${voice}'><prosody pitch='+0Hz' rate='+0%' volume='+0%'>`
+            + `<voice name='${voice}'><prosody pitch='+0Hz' rate='${rate}' volume='+0%'>`
             + `${text}</prosody></voice></speak>`;
           const ssmlMsg = `X-RequestId:${crypto.randomUUID().replaceAll('-', '')}\r\nContent-Type:application/ssml+xml\r\n`
             + `X-Timestamp:${new Date().toISOString()}\r\nPath:ssml\r\n\r\n${ssml}`;
@@ -314,6 +414,32 @@ async function generateEdgeTTS(text: string, voice: string): Promise<VoiceGenera
             if (textMsg.includes("turn.end")) {
               socket.write(buildFrame(8, Buffer.alloc(0)));
               socket.end();
+            } else if (textMsg.includes("Path:audio.metadata")) {
+              // Parse incoming word boundaries
+              const idx = textMsg.indexOf("\r\n\r\n");
+              if (idx !== -1) {
+                const bodyStr = textMsg.substring(idx + 4);
+                try {
+                  const bodyJson = JSON.parse(bodyStr);
+                  const metadataList = bodyJson.Metadata;
+                  if (metadataList) {
+                    for (const item of metadataList) {
+                      if (item.Type === "WordBoundary" && item.Data) {
+                        const word = item.Data.text.Text;
+                        const start = item.Data.Offset / 10000000;
+                        const duration = item.Data.Duration / 10000000;
+                        edgeAlignmentsRaw.push({
+                          word,
+                          start: Math.round(start * 100) / 100,
+                          end: Math.round((start + duration) * 100) / 100
+                        });
+                      }
+                    }
+                  }
+                } catch (e) {
+                  // Safe ignore formatting issues
+                }
+              }
             }
           } else if (frame.opcode === 2) {
             const separator = 'Path:audio\r\n';
@@ -341,7 +467,11 @@ async function generateEdgeTTS(text: string, voice: string): Promise<VoiceGenera
 
   const audioBuffer = Buffer.concat(audioChunks);
   const duration = await extractAudioDuration(audioBuffer.buffer.slice(audioBuffer.byteOffset, audioBuffer.byteOffset + audioBuffer.byteLength));
-  const alignments = estimateTimestamps(text, duration);
+  
+  // Use metadata-derived word boundaries if available, fallback to smart weighted estimation
+  const alignments = edgeAlignmentsRaw.length > 0 
+    ? alignMetadataToScript(text, edgeAlignmentsRaw)
+    : estimateTimestamps(text, duration);
 
   return { audioBuffer: audioBuffer.buffer.slice(audioBuffer.byteOffset, audioBuffer.byteOffset + audioBuffer.byteLength) as ArrayBuffer, alignments };
 }
@@ -423,18 +553,32 @@ async function generateElevenLabsTTS(text: string, voiceId: string, withTimestam
 // ─────────────────────────────────────────────────────────────────────────────
 // Main entry point — routes to the correct TTS provider
 // ─────────────────────────────────────────────────────────────────────────────
+export type VoiceTone = "dramatic" | "calm" | "energetic";
+
+/** Map voiceTone to Edge TTS prosody rate string */
+function toneToEdgeRate(tone?: VoiceTone): string {
+  switch (tone) {
+    case "dramatic":  return "-5%";   // slightly slower, more weight
+    case "energetic": return "+12%";  // fast-paced, punchy
+    case "calm":      return "0%";
+    default:          return "-3%";   // default slight slowdown for clarity
+  }
+}
+
 export async function generateVoice(
   text: string,
   withTimestamps = true,
   overrideProvider?: string,
-  overrideVoice?: string
+  overrideVoice?: string,
+  voiceTone?: VoiceTone
 ): Promise<VoiceGenerationResult> {
   const provider = overrideProvider || process.env.TTS_PROVIDER || "local";
 
   switch (provider) {
     case "edge": {
       const voice = overrideVoice || process.env.EDGE_VOICE || "en-US-AriaNeural";
-      return generateEdgeTTS(text, voice);
+      const rate = toneToEdgeRate(voiceTone);
+      return generateEdgeTTS(text, voice, rate);
     }
     case "local":
     case "kokoro": {

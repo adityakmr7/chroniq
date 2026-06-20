@@ -1,8 +1,13 @@
 import { renderVideoWithRemotion, type WordAlignment } from "./remotion/render.ts";
+import type { MotionStyle, SceneType } from "./video-style.ts";
 
 export interface VideoSceneInput {
   filename: string;
   duration: number;
+  sceneType?: SceneType;
+  headline?: string;
+  emphasis?: string;
+  motion?: MotionStyle;
 }
 
 export async function composeVideo(
@@ -11,7 +16,7 @@ export async function composeVideo(
   scenes: VideoSceneInput[],
   alignments: WordAlignment[],
   outputFilename: string,
-  options?: { enableZoom?: boolean; isShort?: boolean }
+  options?: { enableZoom?: boolean; isShort?: boolean; stylePreset?: string; title?: string; branding?: any }
 ): Promise<void> {
   const isShort = options?.isShort !== false;
   console.log(`     🎥 Composing video using Remotion...`);
@@ -22,6 +27,9 @@ export async function composeVideo(
     audioFilename,
     alignments,
     isShort,
-    outputFilename
+    outputFilename,
+    options?.stylePreset,
+    options?.title,
+    options?.branding
   );
 }

@@ -55,7 +55,10 @@ export async function renderVideoWithRemotion(
   audioUrl: string,
   alignments: WordAlignment[],
   isShort: boolean,
-  outputFilename: string
+  outputFilename: string,
+  stylePresetName = process.env.VIDEO_STYLE || "business_documentary_dark",
+  title?: string,
+  branding?: any
 ): Promise<void> {
   console.log("     🎬 Bundling Remotion video project...");
   const entryPoint = join(import.meta.dir, "entry.tsx");
@@ -64,9 +67,10 @@ export async function renderVideoWithRemotion(
     entryPoint: entryPoint,
   });
 
+  const outroDurationSec = branding ? 5 : 0;
   const durationInFrames = Math.max(
     25,
-    Math.round(scenes.reduce((sum, s) => sum + s.duration, 0) * 25)
+    Math.round((scenes.reduce((sum, s) => sum + s.duration, 0) + outroDurationSec) * 25)
   );
 
   console.log(`     🎥 Rendering Remotion video (${durationInFrames} frames at 25 fps)...`);
@@ -84,6 +88,10 @@ export async function renderVideoWithRemotion(
     const formattedScenes = scenes.map((scene) => ({
       filename: `${baseUrl}/${scene.filename}`,
       duration: scene.duration,
+      sceneType: scene.sceneType,
+      headline: scene.headline,
+      emphasis: scene.emphasis,
+      motion: scene.motion,
     }));
 
     const formattedAudioUrl = `${baseUrl}/${audioUrl}`;
@@ -105,7 +113,11 @@ export async function renderVideoWithRemotion(
       musicUrl,
       alignments,
       isShort,
+      stylePresetName,
+      title,
+      branding,
     };
+
 
     const composition = await selectComposition({
       serveUrl: bundleLocation,

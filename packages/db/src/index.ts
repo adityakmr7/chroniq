@@ -16,6 +16,8 @@ export interface Video {
   tts_provider?: string | null;  // 'edge' | 'local' | 'cloud'
   voice_id?: string | null;       // provider-specific voice ID
   language?: string | null;       // 'en' | 'hi' etc.
+  youtube_video_id?: string | null;
+  thumbnail_variants?: string | null;
   created_at: Date;
 }
 
@@ -38,6 +40,36 @@ export interface SceneManifest {
   duration: number;
   imagePrompt: string;
   searchQuery?: string;
+  sceneType?: string;
+  headline?: string;
+  emphasis?: string;
+  motion?: string;
+}
+
+export interface Schedule {
+  id: string;
+  video_id: string;
+  publish_at: Date;
+  status: "pending" | "published" | "failed";
+  error?: string | null;
+  created_at: Date;
+}
+
+export interface VideoAnalytics {
+  id: string;
+  video_id: string;
+  youtube_video_id: string;
+  views: number;
+  likes: number;
+  comments: number;
+  ctr: number | null;             // click-through rate %
+  avg_view_duration: number | null; // seconds
+  fetched_at: Date;
+}
+
+export interface ChannelSetting {
+  key: string;
+  value: string;
 }
 
 export async function initDatabase() {
@@ -88,6 +120,45 @@ export async function initDatabase() {
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL
     );
   `;
+
+  // ── New tables ──────────────────────────────────────────────────────────────
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS schedules (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      video_id UUID NOT NULL REFERENCES videos(id) ON DELETE CASCADE,
+      publish_at TIMESTAMP NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending',
+      error TEXT,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL
+    );
+  `;
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS video_analytics (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      video_id UUID NOT NULL REFERENCES videos(id) ON DELETE CASCADE,
+      youtube_video_id TEXT NOT NULL,
+      views INTEGER NOT NULL DEFAULT 0,
+      likes INTEGER NOT NULL DEFAULT 0,
+      comments INTEGER NOT NULL DEFAULT 0,
+      ctr NUMERIC,
+      avg_view_duration NUMERIC,
+      fetched_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL
+    );
+  `;
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS channel_settings (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL
+    );
+  `;
+
+  // Add youtube_video_id column to videos if not exists
+  await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS youtube_video_id TEXT;`;
+  await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS thumbnail_variants TEXT;`;
 
   console.log("✅ Database schema initialized successfully.");
 }
@@ -241,3 +312,152 @@ export async function saveTrendingTopics(date: string, topics: any[]): Promise<v
   `;
 }
 
+// ── Schedule helpers ──────────────────────────────────────────────────────────
+
+export async function scheduleVideo(videoId: string, publishAt: Date): Promise<Schedule> {
+  // Remove any existing pending schedule for this video first
+  await sql`DELETE FROM schedules WHERE video_id = ${videoId} AND status = 'pending'`;
+  const [schedule] = await sql<Schedule[]>`
+    INSERT INTO schedules (video_id, publish_at, status)
+    VALUES (${videoId}, ${publishAt.toISOString()}, 'pending')
+    RETURNING *
+  `;
+  return schedule;
+}
+
+export async function cancelSchedule(videoId: string): Promise<void> {
+  await sql`DELETE FROM schedules WHERE video_id = ${videoId} AND status = 'pending'`;
+}
+
+export async function getPendingSchedules(): Promise<(Schedule & { video: Video })[]> {
+  const rows = await sql<(Schedule & Video)[]>`
+    SELECT s.*, v.title, v.topic, v.status AS video_status, v.youtube_url, v.created_at AS video_created_at,
+           v.video_type, v.tts_provider, v.voice_id, v.language, v.scene_manifest, v.error_message
+    FROM schedules s
+    JOIN videos v ON s.video_id = v.id
+    WHERE s.status = 'pending' AND s.publish_at <= NOW()
+    ORDER BY s.publish_at ASC
+  `;
+  return rows.map(r => ({
+    id: r.id,
+    video_id: r.video_id,
+    publish_at: r.publish_at,
+    status: r.status as Schedule['status'],
+    error: r.error ?? null,
+    created_at: r.created_at,
+    video: {
+      id: r.video_id,
+      title: r.title,
+      topic: r.topic,
+      status: (r as any).video_status,
+      duration: (r as any).duration ?? null,
+      youtube_url: r.youtube_url,
+      video_type: r.video_type,
+      tts_provider: r.tts_provider,
+      voice_id: r.voice_id,
+      language: r.language,
+      scene_manifest: r.scene_manifest,
+      error_message: r.error_message,
+      created_at: (r as any).video_created_at ?? r.created_at,
+    },
+  }));
+}
+
+export async function getAllSchedules(): Promise<(Schedule & { video_title: string })[]> {
+  return await sql<(Schedule & { video_title: string })[]>`
+    SELECT s.*, v.title AS video_title
+    FROM schedules s
+    JOIN videos v ON s.video_id = v.id
+    ORDER BY s.publish_at ASC
+  `;
+}
+
+export async function markSchedulePublished(scheduleId: string): Promise<void> {
+  await sql`UPDATE schedules SET status = 'published' WHERE id = ${scheduleId}`;
+}
+
+export async function markScheduleFailed(scheduleId: string, error: string): Promise<void> {
+  await sql`UPDATE schedules SET status = 'failed', error = ${error} WHERE id = ${scheduleId}`;
+}
+
+export async function setVideoYouTubeId(videoId: string, youtubeVideoId: string): Promise<void> {
+  await sql`UPDATE videos SET youtube_video_id = ${youtubeVideoId} WHERE id = ${videoId}`;
+}
+
+// ── Analytics helpers ─────────────────────────────────────────────────────────
+
+export async function upsertVideoAnalytics(data: {
+  videoId: string;
+  youtubeVideoId: string;
+  views: number;
+  likes: number;
+  comments: number;
+  ctr?: number | null;
+  avgViewDuration?: number | null;
+}): Promise<void> {
+  await sql`
+    INSERT INTO video_analytics
+      (video_id, youtube_video_id, views, likes, comments, ctr, avg_view_duration, fetched_at)
+    VALUES
+      (${data.videoId}, ${data.youtubeVideoId}, ${data.views}, ${data.likes}, ${data.comments},
+       ${data.ctr ?? null}, ${data.avgViewDuration ?? null}, NOW())
+    ON CONFLICT DO NOTHING
+  `;
+  // Always insert a fresh row so we have history; prune old rows beyond 30
+  await sql`
+    DELETE FROM video_analytics
+    WHERE video_id = ${data.videoId}
+      AND id NOT IN (
+        SELECT id FROM video_analytics WHERE video_id = ${data.videoId}
+        ORDER BY fetched_at DESC LIMIT 30
+      )
+  `;
+}
+
+export async function getLatestAnalytics(videoId: string): Promise<VideoAnalytics | null> {
+  const [row] = await sql<VideoAnalytics[]>`
+    SELECT * FROM video_analytics WHERE video_id = ${videoId}
+    ORDER BY fetched_at DESC LIMIT 1
+  `;
+  return row || null;
+}
+
+export async function getAllAnalyticsSummary(): Promise<VideoAnalytics[]> {
+  return await sql<VideoAnalytics[]>`
+    SELECT DISTINCT ON (video_id) *
+    FROM video_analytics
+    ORDER BY video_id, fetched_at DESC
+  `;
+}
+
+export async function getVideosWithYouTubeIds(): Promise<Video[]> {
+  return await sql<Video[]>`
+    SELECT * FROM videos WHERE youtube_video_id IS NOT NULL AND status = 'completed'
+  `;
+}
+
+// ── Channel Settings helpers ──────────────────────────────────────────────────
+
+export async function getChannelSetting(key: string): Promise<string | null> {
+  const [row] = await sql<{ value: string }[]>`
+    SELECT value FROM channel_settings WHERE key = ${key}
+  `;
+  return row?.value ?? null;
+}
+
+export async function setChannelSetting(key: string, value: string): Promise<void> {
+  await sql`
+    INSERT INTO channel_settings (key, value)
+    VALUES (${key}, ${value})
+    ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()
+  `;
+}
+
+export async function getAllChannelSettings(): Promise<Record<string, string>> {
+  const rows = await sql<{ key: string; value: string }[]>`SELECT key, value FROM channel_settings`;
+  return Object.fromEntries(rows.map(r => [r.key, r.value]));
+}
+
+export async function saveThumbnailVariants(videoId: string, variants: string[]): Promise<void> {
+  await sql`UPDATE videos SET thumbnail_variants = ${JSON.stringify(variants)} WHERE id = ${videoId}`;
+}

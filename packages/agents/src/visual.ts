@@ -1,12 +1,17 @@
 import { gemini } from "./gemini.ts";
 import type { Script } from "./script.ts";
 import type { Research } from "./research.ts";
+import { normalizeMotionStyle, normalizeSceneType, type MotionStyle, type SceneType } from "./video-style.ts";
 
 export interface Scene {
   timestamp: number;
   duration: number;
   imagePrompt: string;
   searchQuery?: string;
+  sceneType?: SceneType;
+  headline?: string;
+  emphasis?: string;
+  motion?: MotionStyle;
 }
 
 export async function generateScenes(
@@ -25,7 +30,7 @@ Research Summary:
 "${research.summary}"
 
 Timeline:
-${research.timeline.map((t) => `- ${t.year}: ${t.event}`).join("\n")}
+${(research.timeline ?? []).map((t) => `- ${t.year}: ${t.event}`).join("\n") || "No specific timeline available."}
 
 Video Duration: ${totalDuration.toFixed(2)} seconds.
 
@@ -37,6 +42,10 @@ Rules for Scene Generation:
 5. Provide a detailed, highly cinematic, photographic image prompt (imagePrompt) for each scene. The style should be documentary-style, dramatic, with high contrast. Use descriptive details rather than buzzwords.
 6. The scenes must follow the chronological flow of the script.
 7. The imagePrompts should generate images suited for a ${isShort ? "9:16 vertical" : "16:9 horizontal"} aspect ratio.
+8. Use sceneType to create editorial variety. Pick one of: "image", "headline", "stat", "quote", "timeline", "comparison".
+9. headline should be a short on-screen editorial label, 3-8 words max.
+10. emphasis should be the strongest word, year, number, company, or phrase to highlight.
+11. motion should be one of: "zoom-in", "zoom-out", "pan-left", "pan-right", "pan-up".
 
 Return ONLY JSON matching:
 {
@@ -45,7 +54,11 @@ Return ONLY JSON matching:
       "timestamp": number, // start time in seconds
       "duration": number,  // duration of the scene in seconds
       "imagePrompt": string, // descriptive prompt for an AI image generator (e.g. "9:16 cinematic portrait of...")
-      "searchQuery": string // 3-4 descriptive keywords to search for a stock photo of this scene (e.g. "Nokia 3310 phone", "Blockbuster store outside")
+      "searchQuery": string, // 3-4 descriptive keywords to search for a stock photo of this scene (e.g. "Nokia 3310 phone", "Blockbuster store outside")
+      "sceneType": string,
+      "headline": string,
+      "emphasis": string,
+      "motion": string
     }
   ]
 }`;
@@ -69,6 +82,10 @@ Return ONLY JSON matching:
     } else {
       scenes[i].duration = Math.round(scenes[i].duration * 100) / 100;
     }
+    scenes[i].sceneType = normalizeSceneType(scenes[i].sceneType);
+    scenes[i].motion = normalizeMotionStyle(scenes[i].motion, i);
+    scenes[i].headline = (scenes[i].headline || "").trim();
+    scenes[i].emphasis = (scenes[i].emphasis || "").trim();
     currentTimestamp += scenes[i].duration;
   }
 
@@ -181,7 +198,7 @@ function cleanSearchQuery(prompt: string): string {
   return cleaned.trim() || prompt.split(/\s+/).slice(0, 4).join(" ");
 }
 
-export async function downloadImage(prompt: string, outputPath: string, isShort = true): Promise<void> {
+export async function downloadImage(prompt: string, outputPath: string, isShort = true, searchQueryOverride?: string): Promise<void> {
   const provider = process.env.IMAGE_PROVIDER || "placeholder";
 
   if (provider === "local_sd") {
@@ -323,7 +340,7 @@ export async function downloadImage(prompt: string, outputPath: string, isShort 
   }
 
   if (provider === "placeholder") {
-    const searchQuery = cleanSearchQuery(prompt);
+    const searchQuery = searchQueryOverride ?? cleanSearchQuery(prompt);
     let searchResultUrl = await searchImageBing(searchQuery);
 
     if (!searchResultUrl) {

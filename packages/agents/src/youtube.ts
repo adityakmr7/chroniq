@@ -16,8 +16,8 @@ export async function generateYouTubeMetadata(
   research: Research,
   isShort: boolean
 ): Promise<YouTubeMetadata> {
-  const prompt = `You are an expert YouTube SEO and marketing manager.
-Given this topic, script, and research, generate optimized metadata for uploading the video.
+  const prompt = `You are a top YouTube SEO strategist who has grown channels to 1M+ subscribers.
+Generate viral, highly optimized YouTube metadata for this video.
 
 Topic: "${topic.title}"
 Angle: ${topic.angle}
@@ -25,14 +25,33 @@ Script: "${script.full}"
 Research Summary: "${research.summary}"
 Is this a YouTube Short? ${isShort ? "Yes" : "No"}
 
-Rules:
-1. title: A punchy, highly viral video title (max 100 characters, ideally under 60 characters for Shorts to avoid truncation). Include relevant curiosity gaps.
-2. description: An engaging description. It should summarize the story in 2-3 lines, invite viewers to comment and subscribe, and include 3-5 relevant hashtags (always include #shorts for Shorts, and niche tags like #history, #technology, #startups).
-3. tags: Array of 8-15 SEO tags/keywords.
-4. categoryId: Choose the most appropriate YouTube category ID as a string:
-   - "28": Science & Technology (preferred for tech history)
-   - "27": Education (preferred for case studies/forgotten stories)
-   - "22": People & Blogs
+Title Rules (CRITICAL — this is the most important CTR factor):
+- Use ONE of these proven viral title formulas:
+  a) "Why [Company/Person] [Dramatic Verb] (And Nobody Saw It Coming)"
+  b) "The [Shocking Number/Metric] That [Destroyed/Built] [Company/Person]"
+  c) "How [Person/Company] [Achieved/Lost] [Thing] In [Short Time]"
+  d) "The Real Reason [Company/Person] [Failed/Succeeded]"
+  e) "[Company/Person] [Shocking Verb]: The Story Nobody Tells"
+- Max 65 characters (avoids truncation in mobile feed).
+- Include a power word: Collapsed, Exposed, Destroyed, Revealed, Untold, Secret, Shocking, Hidden.
+- For Shorts: append " #shorts" at the end IF it still fits in 65 chars, otherwise skip it.
+
+Description Rules:
+- First 2 lines = hook sentence from the script (displayed in feed preview WITHOUT clicking — this is critical).
+- Line 3: Empty line for breathing room.
+- Lines 4-6: 2-3 sentence story summary.
+- Line 7: "Follow for daily stories like this."
+- Final lines: 5-8 hashtags (always include #shorts if Short, plus 2 broad: #business #history, plus 2 niche based on the topic).
+
+Tags Rules:
+- Generate 15-20 SEO tags.
+- Mix 3 tiers: (1) broad keywords (e.g. "business history", "startup failure"), (2) mid-tail (e.g. "nokia bankruptcy story"), (3) long-tail (e.g. "why nokia failed documentary short").
+- Always include the topic title as a tag.
+
+categoryId:
+- "28": Science & Technology (tech history, AI, software)
+- "27": Education (business cases, historical events, forgotten stories)
+- "22": People & Blogs (personality-driven stories)
 
 Return ONLY JSON matching:
 {
