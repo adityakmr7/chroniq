@@ -26,5 +26,13 @@ Return ONLY JSON matching:
 Be factually accurate. Do not invent statistics. If unsure of a number, describe it qualitatively.`;
 
   const raw = await gemini(prompt, { json: true });
-  return JSON.parse(raw) as Research;
+  const parsed = JSON.parse(raw) as Partial<Research>;
+
+  // Sanitize: LLM may omit array fields for non-historical topics (e.g. horror, fictional stories)
+  return {
+    summary: parsed.summary || "",
+    facts: Array.isArray(parsed.facts) ? parsed.facts : [],
+    timeline: Array.isArray(parsed.timeline) ? parsed.timeline : [],
+    sources: Array.isArray(parsed.sources) ? parsed.sources : [],
+  };
 }

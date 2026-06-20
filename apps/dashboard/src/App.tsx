@@ -13,6 +13,8 @@ interface Video {
   tts_provider?: string | null;
   voice_id?: string | null;
   language?: string | null;
+  youtube_video_id?: string | null;
+  thumbnail_variants?: string | null;
   created_at: string;
 }
 
@@ -115,6 +117,119 @@ function HitlReviewPanel({
 
   const [currentVideo, setCurrentVideo] = useState<Video>(video);
   const scenes: SceneManifest[] = currentVideo.scene_manifest ? JSON.parse(currentVideo.scene_manifest) : [];
+
+  // Metadata editor state
+  const [ytTitle, setYtTitle] = useState("");
+  const [ytDescription, setYtDescription] = useState("");
+  const [ytTags, setYtTags] = useState("");
+  const [isSavingMeta, setIsSavingMeta] = useState(false);
+  const [metaSaved, setMetaSaved] = useState(false);
+  const [isRegeneratingScene, setIsRegeneratingScene] = useState<number | null>(null);
+
+  // Thumbnail variants states
+  const [thumbnailVariants, setThumbnailVariants] = useState<string[]>([]);
+  const [isGeneratingVariants, setIsGeneratingVariants] = useState(false);
+  const [selectedVariant, setSelectedVariant] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (video.thumbnail_variants) {
+      try {
+        setThumbnailVariants(JSON.parse(video.thumbnail_variants));
+      } catch (err) {
+        console.error(err);
+      }
+    }
+  }, [video.thumbnail_variants]);
+
+  const handleGenerateVariants = async () => {
+    setIsGeneratingVariants(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/videos/${video.id}/thumbnails/generate-variants`, {
+        method: "POST",
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setThumbnailVariants(data.variants || []);
+        setSelectedVariant(0); // Select first variant by default
+        // Select it on the server
+        await fetch(`${API_BASE}/api/videos/${video.id}/thumbnails/select-variant`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ index: 0 }),
+        });
+      }
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setIsGeneratingVariants(false);
+    }
+  };
+
+  const handleSelectVariant = async (idx: number) => {
+    setSelectedVariant(idx);
+    try {
+      await fetch(`${API_BASE}/api/videos/${video.id}/thumbnails/select-variant`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ index: idx }),
+      });
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+
+  // Load YT metadata from API on mount
+  useEffect(() => {
+    fetch(`${API_BASE}/api/videos/${video.id}/metadata`)
+      .then(r => r.ok ? r.json() : null)
+      .then(data => {
+        if (data) {
+          setYtTitle(data.title || "");
+          setYtDescription(data.description || "");
+          setYtTags(Array.isArray(data.tags) ? data.tags.join(", ") : "");
+        }
+      })
+      .catch(() => {});
+  }, [video.id]);
+
+  const handleSaveMetadata = async () => {
+    setIsSavingMeta(true);
+    try {
+      await fetch(`${API_BASE}/api/videos/${video.id}/metadata`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: ytTitle,
+          description: ytDescription,
+          tags: ytTags.split(",").map(t => t.trim()).filter(Boolean),
+        }),
+      });
+      setMetaSaved(true);
+      setTimeout(() => setMetaSaved(false), 2000);
+    } finally {
+      setIsSavingMeta(false);
+    }
+  };
+
+  const handleRegenerateSceneImage = async (index: number) => {
+    setIsRegeneratingScene(index);
+    try {
+      const res = await fetch(`${API_BASE}/api/videos/${video.id}/scenes/${index}/regenerate`, {
+        method: "POST",
+      });
+      if (res.ok) {
+        setSceneVersion(prev => prev + 1);
+      } else {
+        const err = await res.json();
+        alert(`Regenerate failed: ${err.error || "Unknown error"}`);
+      }
+    } catch (err: any) {
+      alert(`Regenerate error: ${err.message}`);
+    } finally {
+      setIsRegeneratingScene(null);
+    }
+  };
 
   // Helper to filter voices based on provider & language
   const getMatchingVoices = (provider: string, lang: string) => {
@@ -359,7 +474,132 @@ function HitlReviewPanel({
               <p style={{ fontSize: "0.72rem", fontWeight: 700, color: "hsl(var(--text-muted))", textTransform: "uppercase", marginBottom: "0.4rem" }}>🎙️ Narration Audio Preview</p>
               <audio src={`${API_BASE}/assets/${slug}/narration.mp3?v=${audioVersion}`} controls style={{ width: "100%", height: "32px" }} />
             </div>
+
+            {/* YouTube Metadata Editor */}
+            <div style={{ background: "rgba(255,255,255,0.02)", border: "1px solid hsl(var(--border))", borderRadius: "8px", padding: "0.75rem", display: "flex", flexDirection: "column", gap: "0.4rem" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <p style={{ fontSize: "0.72rem", fontWeight: 700, color: "hsl(var(--text-muted))", textTransform: "uppercase", margin: 0 }}>📺 YouTube Metadata</p>
+                <button
+                  onClick={handleSaveMetadata}
+                  disabled={isSavingMeta}
+                  style={{ padding: "0.25rem 0.6rem", fontSize: "0.65rem", fontWeight: 700, borderRadius: "5px", border: "none", background: metaSaved ? "#22c55e" : "rgba(255,255,255,0.1)", color: "#fff", cursor: "pointer" }}
+                >
+                  {metaSaved ? "✓ Saved!" : isSavingMeta ? "Saving..." : "💾 Save"}
+                </button>
+              </div>
+              <div>
+                <label style={{ fontSize: "0.62rem", color: "hsl(var(--text-muted))", display: "block", marginBottom: "0.15rem" }}>Title (max 65 chars)</label>
+                <input
+                  value={ytTitle}
+                  onChange={e => setYtTitle(e.target.value)}
+                  maxLength={100}
+                  style={{ width: "100%", background: "rgba(0,0,0,0.3)", color: "#fff", border: "1px solid hsl(var(--border))", borderRadius: "4px", padding: "0.3rem 0.5rem", fontSize: "0.75rem", outline: "none", boxSizing: "border-box" }}
+                />
+                <span style={{ fontSize: "0.6rem", color: ytTitle.length > 65 ? "#ef4444" : "hsl(var(--text-muted))" }}>{ytTitle.length}/65</span>
+              </div>
+              <div>
+                <label style={{ fontSize: "0.62rem", color: "hsl(var(--text-muted))", display: "block", marginBottom: "0.15rem" }}>Description</label>
+                <textarea
+                  value={ytDescription}
+                  onChange={e => setYtDescription(e.target.value)}
+                  rows={3}
+                  style={{ width: "100%", background: "rgba(0,0,0,0.3)", color: "#fff", border: "1px solid hsl(var(--border))", borderRadius: "4px", padding: "0.3rem 0.5rem", fontSize: "0.72rem", outline: "none", resize: "vertical", fontFamily: "inherit", boxSizing: "border-box" }}
+                />
+              </div>
+              <div>
+                <label style={{ fontSize: "0.62rem", color: "hsl(var(--text-muted))", display: "block", marginBottom: "0.15rem" }}>Tags (comma-separated)</label>
+                <input
+                  value={ytTags}
+                  onChange={e => setYtTags(e.target.value)}
+                  placeholder="nokia, tech history, startup failure"
+                  style={{ width: "100%", background: "rgba(0,0,0,0.3)", color: "#fff", border: "1px solid hsl(var(--border))", borderRadius: "4px", padding: "0.3rem 0.5rem", fontSize: "0.72rem", outline: "none", boxSizing: "border-box" }}
+                />
+              </div>
+            </div>
+
+            {/* A/B Thumbnail Variants */}
+            <div style={{ background: "rgba(255,255,255,0.02)", border: "1px solid hsl(var(--border))", borderRadius: "8px", padding: "0.75rem", display: "flex", flexDirection: "column", gap: "0.5rem" }}>
+              <p style={{ fontSize: "0.72rem", fontWeight: 700, color: "hsl(var(--text-muted))", textTransform: "uppercase", margin: 0 }}>🎨 A/B Thumbnail Variants</p>
+              
+              {thumbnailVariants.length === 0 ? (
+                <button
+                  onClick={handleGenerateVariants}
+                  disabled={isGeneratingVariants}
+                  style={{
+                    width: "100%",
+                    padding: "0.4rem",
+                    fontSize: "0.72rem",
+                    fontWeight: 700,
+                    borderRadius: "6px",
+                    border: "none",
+                    background: isGeneratingVariants ? "#6b7280" : "linear-gradient(135deg, hsl(var(--accent-purple)), #6366f1)",
+                    color: "#fff",
+                    cursor: "pointer",
+                  }}
+                >
+                  {isGeneratingVariants ? "⏳ Generating 3 Variants..." : "🎨 Generate A/B Thumbnails"}
+                </button>
+              ) : (
+                <div>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "0.5rem", marginBottom: "0.5rem" }}>
+                    {thumbnailVariants.map((variant, idx) => (
+                      <div 
+                        key={idx} 
+                        onClick={() => handleSelectVariant(idx)}
+                        style={{
+                          border: selectedVariant === idx ? "2.5px solid hsl(var(--accent-purple))" : "1.5px solid hsl(var(--border))",
+                          borderRadius: "6px",
+                          overflow: "hidden",
+                          cursor: "pointer",
+                          position: "relative",
+                          opacity: selectedVariant === idx ? 1.0 : 0.65,
+                          transition: "all 0.2s"
+                        }}
+                      >
+                        <img 
+                          src={`${API_BASE}/assets/${slug}/${variant}`} 
+                          alt={`Variant ${idx}`} 
+                          style={{ width: "100%", aspectRatio: video.video_type === "long" ? "16/9" : "9/16", objectFit: "cover", display: "block" }} 
+                        />
+                        <div style={{
+                          position: "absolute",
+                          bottom: 0,
+                          left: 0,
+                          right: 0,
+                          background: "rgba(0,0,0,0.7)",
+                          color: "#fff",
+                          fontSize: "0.6rem",
+                          fontWeight: 700,
+                          textAlign: "center",
+                          padding: "0.15rem 0"
+                        }}>
+                          Option {idx === 0 ? 'A' : idx === 1 ? 'B' : 'C'}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  <button
+                    onClick={handleGenerateVariants}
+                    disabled={isGeneratingVariants}
+                    style={{
+                      width: "100%",
+                      padding: "0.3rem",
+                      fontSize: "0.68rem",
+                      fontWeight: 600,
+                      borderRadius: "4px",
+                      border: "none",
+                      background: "rgba(255,255,255,0.06)",
+                      color: "hsl(var(--text-secondary))",
+                      cursor: "pointer",
+                    }}
+                  >
+                    {isGeneratingVariants ? "⏳ Regenerating..." : "🔄 Regenerate Variants"}
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
+
 
           {/* Right: Scene Images */}
           <div style={{ padding: "1.5rem", overflowY: "auto", maxHeight: "520px" }}>
@@ -378,28 +618,46 @@ function HitlReviewPanel({
                   <div style={{ padding: "0.5rem 0.6rem" }}>
                     <p style={{ fontSize: "0.65rem", fontWeight: 700, color: "#f97316", margin: "0 0 0.2rem" }}>Scene {scene.index + 1} · {scene.duration.toFixed(1)}s</p>
                     <p style={{ fontSize: "0.65rem", color: "hsl(var(--text-muted))", margin: "0 0 0.4rem 0", lineHeight: 1.4 }}>{scene.imagePrompt}</p>
-                    <label style={{
-                      display: "inline-flex",
-                      alignItems: "center",
-                      gap: "0.3rem",
-                      padding: "0.25rem 0.6rem",
-                      fontSize: "0.65rem",
-                      fontWeight: 700,
-                      borderRadius: "4px",
-                      background: "rgba(255,255,255,0.08)",
-                      border: "1px solid hsl(var(--border))",
-                      color: "hsl(var(--text))",
-                      cursor: "pointer",
-                      transition: "background 0.2s"
-                    }}>
-                      📁 Replace Image
-                      <input 
-                        type="file" 
-                        accept="image/*" 
-                        style={{ display: "none" }} 
-                        onChange={(e) => handleImageUpload(scene.index, e)}
-                      />
-                    </label>
+                    <div style={{ display: "flex", gap: "0.4rem", flexWrap: "wrap" }}>
+                      <label style={{
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: "0.3rem",
+                        padding: "0.25rem 0.6rem",
+                        fontSize: "0.65rem",
+                        fontWeight: 700,
+                        borderRadius: "4px",
+                        background: "rgba(255,255,255,0.08)",
+                        border: "1px solid hsl(var(--border))",
+                        color: "hsl(var(--text))",
+                        cursor: "pointer",
+                        transition: "background 0.2s"
+                      }}>
+                        📁 Replace
+                        <input
+                          type="file"
+                          accept="image/*"
+                          style={{ display: "none" }}
+                          onChange={(e) => handleImageUpload(scene.index, e)}
+                        />
+                      </label>
+                      <button
+                        onClick={() => handleRegenerateSceneImage(scene.index)}
+                        disabled={isRegeneratingScene === scene.index}
+                        style={{
+                          padding: "0.25rem 0.6rem",
+                          fontSize: "0.65rem",
+                          fontWeight: 700,
+                          borderRadius: "4px",
+                          border: "none",
+                          background: isRegeneratingScene === scene.index ? "#6b7280" : "rgba(56,189,248,0.15)",
+                          color: isRegeneratingScene === scene.index ? "#fff" : "#38bdf8",
+                          cursor: "pointer",
+                        }}
+                      >
+                        {isRegeneratingScene === scene.index ? "⏳" : "🔄 Regen"}
+                      </button>
+                    </div>
                   </div>
                 </div>
               ))}
@@ -454,10 +712,671 @@ function HitlReviewPanel({
   );
 }
 
+// ─── VideoScheduler Component ───────────────────────────────────────────────
+function VideoScheduler({ videoId, API_BASE, onScheduled }: { videoId: string; API_BASE: string; onScheduled: () => void }) {
+  const [schedule, setSchedule] = useState<any>(null);
+  const [publishAt, setPublishAt] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const fetchSchedule = useCallback(async () => {
+    try {
+      const res = await fetch(`${API_BASE}/api/schedules`);
+      if (res.ok) {
+        const list = await res.json();
+        const found = list.find((s: any) => s.video_id === videoId && s.status === 'pending');
+        setSchedule(found || null);
+      }
+    } catch {}
+  }, [videoId, API_BASE]);
+
+  useEffect(() => {
+    fetchSchedule();
+  }, [fetchSchedule]);
+
+  const handleSchedule = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!publishAt) return;
+    setIsSubmitting(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/videos/${videoId}/schedule`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ publishAt }),
+      });
+      if (res.ok) {
+        await fetchSchedule();
+        onScheduled();
+      }
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleCancel = async () => {
+    if (!window.confirm("Cancel scheduled publish?")) return;
+    setIsSubmitting(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/videos/${videoId}/schedule`, { method: "DELETE" });
+      if (res.ok) {
+        setSchedule(null);
+        onScheduled();
+      }
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  if (schedule) {
+    return (
+      <div style={{ background: "rgba(16,185,129,0.06)", border: "1px solid rgba(16,185,129,0.2)", borderRadius: "8px", padding: "0.75rem", fontSize: "0.8rem" }}>
+        <p style={{ fontWeight: 600, color: "#10b981", display: "flex", alignItems: "center", gap: "0.25rem", margin: 0 }}>
+          <span>📅 Scheduled to publish on YouTube:</span>
+        </p>
+        <p style={{ margin: "0.25rem 0 0.5rem 0", color: "#fff", fontWeight: 700 }}>
+          {new Date(schedule.publish_at).toLocaleString()}
+        </p>
+        <button 
+          onClick={handleCancel} 
+          disabled={isSubmitting}
+          style={{
+            padding: "0.3rem 0.6rem",
+            fontSize: "0.72rem",
+            background: "rgba(239,68,68,0.1)",
+            border: "1px solid rgba(239,68,68,0.2)",
+            color: "#ef4444",
+            borderRadius: "4px",
+            cursor: "pointer"
+          }}
+        >
+          {isSubmitting ? "Cancelling..." : "Cancel Schedule"}
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <form onSubmit={handleSchedule} style={{ display: "flex", gap: "0.5rem", alignItems: "end" }}>
+      <div className="form-group" style={{ flex: 1, gap: "0.25rem" }}>
+        <input 
+          type="datetime-local" 
+          className="select-input" 
+          value={publishAt} 
+          onChange={e => setPublishAt(e.target.value)} 
+          required 
+          style={{ width: "100%", padding: "0.5rem", boxSizing: "border-box" }}
+        />
+      </div>
+      <button 
+        type="submit" 
+        className="btn" 
+        disabled={isSubmitting || !publishAt}
+        style={{ padding: "0.5rem 1rem", fontSize: "0.8rem", height: "38px" }}
+      >
+        {isSubmitting ? "Saving..." : "Schedule"}
+      </button>
+    </form>
+  );
+}
+
+// ─── BrandingView Component ──────────────────────────────────────────────────
+function BrandingView({ API_BASE }: { API_BASE: string }) {
+  const [branding, setBranding] = useState({
+    channelName: "Chroniq",
+    tagline: "The World's Untold Stories",
+    accentColor: "#f97316",
+    secondaryColor: "#a855f7",
+    outroMessage: "Follow for daily stories.",
+    logoEmoji: "🎬",
+  });
+  const [isSaving, setIsSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+
+  useEffect(() => {
+    fetch(`${API_BASE}/api/branding`)
+      .then(res => res.json())
+      .then(data => {
+        if (data && data.channelName) setBranding(data);
+      })
+      .catch(console.error);
+  }, []);
+
+  const handleSave = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsSaving(true);
+    setSaved(false);
+    try {
+      const res = await fetch(`${API_BASE}/api/branding`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(branding),
+      });
+      if (res.ok) {
+        setSaved(true);
+        setTimeout(() => setSaved(false), 3000);
+      }
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: "2rem" }}>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: "2rem", alignItems: "start" }} className="panel-grid">
+        
+        {/* Settings Form */}
+        <form onSubmit={handleSave} className="panel" style={{ gap: "1.25rem" }}>
+          <h2 className="panel-title">🎨 Channel Branding</h2>
+          
+          <div className="form-group">
+            <label>Channel Name</label>
+            <input 
+              type="text" 
+              className="input-text" 
+              value={branding.channelName} 
+              onChange={e => setBranding({ ...branding, channelName: e.target.value })} 
+              required 
+            />
+          </div>
+
+          <div className="form-group">
+            <label>Channel Tagline</label>
+            <input 
+              type="text" 
+              className="input-text" 
+              value={branding.tagline} 
+              onChange={e => setBranding({ ...branding, tagline: e.target.value })} 
+              required 
+            />
+          </div>
+
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1rem" }}>
+            <div className="form-group">
+              <label>Accent Color</label>
+              <div style={{ display: "flex", gap: "0.5rem" }}>
+                <input 
+                  type="color" 
+                  value={branding.accentColor} 
+                  onChange={e => setBranding({ ...branding, accentColor: e.target.value })} 
+                  style={{ width: "40px", height: "40px", border: "none", borderRadius: "6px", cursor: "pointer", background: "none", padding: 0 }}
+                />
+                <input 
+                  type="text" 
+                  className="input-text" 
+                  value={branding.accentColor} 
+                  onChange={e => setBranding({ ...branding, accentColor: e.target.value })} 
+                  style={{ flex: 1 }}
+                />
+              </div>
+            </div>
+
+            <div className="form-group">
+              <label>Secondary Color</label>
+              <div style={{ display: "flex", gap: "0.5rem" }}>
+                <input 
+                  type="color" 
+                  value={branding.secondaryColor} 
+                  onChange={e => setBranding({ ...branding, secondaryColor: e.target.value })} 
+                  style={{ width: "40px", height: "40px", border: "none", borderRadius: "6px", cursor: "pointer", background: "none", padding: 0 }}
+                />
+                <input 
+                  type="text" 
+                  className="input-text" 
+                  value={branding.secondaryColor} 
+                  onChange={e => setBranding({ ...branding, secondaryColor: e.target.value })} 
+                  style={{ flex: 1 }}
+                />
+              </div>
+            </div>
+          </div>
+
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 3fr", gap: "1rem" }}>
+            <div className="form-group">
+              <label>Logo Emoji</label>
+              <input 
+                type="text" 
+                className="input-text" 
+                value={branding.logoEmoji} 
+                onChange={e => setBranding({ ...branding, logoEmoji: e.target.value })} 
+                maxLength={2} 
+                style={{ textAlign: "center", fontSize: "1.25rem" }}
+                required 
+              />
+            </div>
+
+            <div className="form-group">
+              <label>Outro CTA Message</label>
+              <input 
+                type="text" 
+                className="input-text" 
+                value={branding.outroMessage} 
+                onChange={e => setBranding({ ...branding, outroMessage: e.target.value })} 
+                required 
+              />
+            </div>
+          </div>
+
+          <button type="submit" className="btn" disabled={isSaving}>
+            {isSaving ? "Saving..." : "💾 Save Channel Settings"}
+          </button>
+          
+          {saved && (
+            <div style={{ color: "hsl(var(--accent-emerald))", fontSize: "0.85rem", fontWeight: 600 }}>
+              ✅ Branding settings saved successfully! New renders will include this branding and outro.
+            </div>
+          )}
+        </form>
+
+        {/* Outro Preview Box */}
+        <div className="panel" style={{ gap: "1.25rem", height: "100%", justifyContent: "space-between" }}>
+          <h2 className="panel-title">🎬 Live Outro Preview (5s Card)</h2>
+          
+          <div style={{
+            aspectRatio: "9/16",
+            width: "100%",
+            maxWidth: "280px",
+            margin: "0 auto",
+            backgroundColor: "#080808",
+            border: "1px solid hsl(var(--border))",
+            borderRadius: "12px",
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: "2rem",
+            position: "relative",
+            overflow: "hidden",
+            boxShadow: "0 10px 30px rgba(0,0,0,0.5)",
+            background: `radial-gradient(circle, ${branding.secondaryColor}15 0%, #080808 80%)`
+          }}>
+            {/* Logo Circle */}
+            <div style={{
+              width: "80px",
+              height: "80px",
+              borderRadius: "50%",
+              background: `linear-gradient(135deg, ${branding.accentColor}, ${branding.secondaryColor})`,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              boxShadow: `0 0 25px ${branding.accentColor}33`,
+              marginBottom: "1.5rem"
+            }}>
+              <span style={{ fontSize: "2.5rem" }}>{branding.logoEmoji || "🎬"}</span>
+            </div>
+
+            {/* Title */}
+            <h3 style={{
+              color: "#fff",
+              fontSize: "1.5rem",
+              fontWeight: 900,
+              textTransform: "uppercase",
+              letterSpacing: "0.05em",
+              textAlign: "center",
+              margin: 0,
+              textShadow: `0 0 10px ${branding.accentColor}33`
+            }}>
+              {branding.channelName || "Chroniq"}
+            </h3>
+
+            {/* Tagline */}
+            <p style={{
+              color: "rgba(255,255,255,0.6)",
+              fontSize: "0.85rem",
+              textAlign: "center",
+              margin: "0.5rem 0 2rem 0",
+              fontWeight: 500
+            }}>
+              {branding.tagline || "The World's Untold Stories"}
+            </p>
+
+            {/* CTA */}
+            <div style={{
+              padding: "0.6rem 1.5rem",
+              borderRadius: "20px",
+              background: `linear-gradient(90deg, ${branding.accentColor}, ${branding.secondaryColor})`,
+              color: "#fff",
+              fontSize: "0.75rem",
+              fontWeight: 700,
+              textTransform: "uppercase",
+              boxShadow: `0 0 15px ${branding.accentColor}44`,
+              textAlign: "center"
+            }}>
+              {branding.outroMessage || "Follow for daily stories."}
+            </div>
+          </div>
+          <p style={{ fontSize: "0.75rem", color: "hsl(var(--text-muted))", textAlign: "center" }}>
+            This card is automatically appended as a 5-second end screen to all rendered videos.
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── AnalyticsView Component ─────────────────────────────────────────────────
+function AnalyticsView({ API_BASE }: { API_BASE: string }) {
+  const [summaries, setSummaries] = useState<any[]>([]);
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [lastSynced, setLastSynced] = useState<string | null>(null);
+
+  const fetchAnalytics = useCallback(async () => {
+    try {
+      const res = await fetch(`${API_BASE}/api/analytics`);
+      if (res.ok) setSummaries(await res.json());
+    } catch (err) {
+      console.error(err);
+    }
+  }, [API_BASE]);
+
+  useEffect(() => {
+    fetchAnalytics();
+  }, [fetchAnalytics]);
+
+  const handleSync = async () => {
+    setIsSyncing(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/analytics/sync`, { method: "POST" });
+      if (res.ok) {
+        await fetchAnalytics();
+        setLastSynced(new Date().toLocaleTimeString());
+      }
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
+  const totalViews = summaries.reduce((sum, s) => sum + parseInt(s.views || "0"), 0);
+  const totalLikes = summaries.reduce((sum, s) => sum + parseInt(s.likes || "0"), 0);
+  const totalComments = summaries.reduce((sum, s) => sum + parseInt(s.comments || "0"), 0);
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: "1.5rem" }}>
+      
+      {/* Top Header Row */}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "1rem" }}>
+        <div>
+          <h2 style={{ fontSize: "1.5rem", fontWeight: 800 }}>📊 YouTube Channel Performance</h2>
+          <p style={{ fontSize: "0.85rem", color: "hsl(var(--text-muted))" }}>Stats are pulled from your live YouTube uploads</p>
+        </div>
+        <div style={{ display: "flex", gap: "1rem", alignItems: "center" }}>
+          {lastSynced && (
+            <span style={{ fontSize: "0.75rem", color: "hsl(var(--accent-emerald))", fontWeight: 600 }}>
+              Last synced: {lastSynced}
+            </span>
+          )}
+          <button className="btn" onClick={handleSync} disabled={isSyncing}>
+            {isSyncing ? "🔄 Syncing with YouTube..." : "⚡ Sync Real-time Stats"}
+          </button>
+        </div>
+      </div>
+
+      {/* Aggregate Stats Cards */}
+      <div className="metrics-grid">
+        <div className="metric-card" style={{ background: "linear-gradient(135deg, rgba(59,130,246,0.05) 0%, rgba(255,255,255,0.01) 100%)" }}>
+          <span className="metric-title">Aggregate Views</span>
+          <span className="metric-value" style={{ color: "#3b82f6" }}>{totalViews.toLocaleString()}</span>
+          <span className="metric-trend up">📈 Across all uploads</span>
+        </div>
+        <div className="metric-card" style={{ background: "linear-gradient(135deg, rgba(236,72,153,0.05) 0%, rgba(255,255,255,0.01) 100%)" }}>
+          <span className="metric-title">Aggregate Likes</span>
+          <span className="metric-value" style={{ color: "#ec4899" }}>{totalLikes.toLocaleString()}</span>
+          <span className="metric-trend up">❤️ Positive feedback</span>
+        </div>
+        <div className="metric-card" style={{ background: "linear-gradient(135deg, rgba(245,158,11,0.05) 0%, rgba(255,255,255,0.01) 100%)" }}>
+          <span className="metric-title">Aggregate Comments</span>
+          <span className="metric-value" style={{ color: "#f59e0b" }}>{totalComments.toLocaleString()}</span>
+          <span className="metric-trend up">💬 Viewer comments</span>
+        </div>
+      </div>
+
+      {/* Video Statistics Table */}
+      <div className="panel">
+        <h3 className="panel-title">Video Performance Breakdown</h3>
+        
+        {summaries.length === 0 ? (
+          <div style={{ padding: "3rem", textAlign: "center", color: "hsl(var(--text-muted))" }}>
+            No YouTube analytics recorded yet. Sync stats above or upload videos to track views.
+          </div>
+        ) : (
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", textAlign: "left", fontSize: "0.875rem" }}>
+              <thead>
+                <tr style={{ borderBottom: "1px solid hsl(var(--border))", color: "hsl(var(--text-muted))" }}>
+                  <th style={{ padding: "0.75rem 1rem" }}>Video Name</th>
+                  <th style={{ padding: "0.75rem 1rem" }}>YouTube ID</th>
+                  <th style={{ padding: "0.75rem 1rem", textAlign: "right" }}>Views</th>
+                  <th style={{ padding: "0.75rem 1rem", textAlign: "right" }}>Likes</th>
+                  <th style={{ padding: "0.75rem 1rem", textAlign: "right" }}>Comments</th>
+                  <th style={{ padding: "0.75rem 1rem", textAlign: "center" }}>Link</th>
+                </tr>
+              </thead>
+              <tbody>
+                {summaries.map((s, idx) => (
+                  <tr key={idx} style={{ borderBottom: "1px solid rgba(255,255,255,0.03)", transition: "background 0.2s" }} onMouseEnter={e => e.currentTarget.style.backgroundColor = "rgba(255,255,255,0.01)"} onMouseLeave={e => e.currentTarget.style.backgroundColor = "transparent"}>
+                    <td style={{ padding: "1rem", fontWeight: 600, color: "#fff" }}>{s.videoTitle}</td>
+                    <td style={{ padding: "1rem", fontFamily: "monospace", fontSize: "0.78rem" }}>{s.youtube_video_id}</td>
+                    <td style={{ padding: "1rem", textAlign: "right", fontWeight: 700, color: "#3b82f6" }}>{s.views.toLocaleString()}</td>
+                    <td style={{ padding: "1rem", textAlign: "right", color: "#ec4899" }}>{s.likes.toLocaleString()}</td>
+                    <td style={{ padding: "1rem", textAlign: "right", color: "#f59e0b" }}>{s.comments.toLocaleString()}</td>
+                    <td style={{ padding: "1rem", textAlign: "center" }}>
+                      {s.youtubeUrl ? (
+                        <a href={s.youtubeUrl} target="_blank" rel="noopener noreferrer" style={{ color: "hsl(var(--accent-purple))", textDecoration: "none", fontWeight: 600 }}>Watch 🎬</a>
+                      ) : "—"}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── SchedulesView Component ─────────────────────────────────────────────────
+function SchedulesView({ API_BASE, videos, onRefresh }: { API_BASE: string; videos: Video[]; onRefresh: () => void }) {
+  const [schedules, setSchedules] = useState<any[]>([]);
+  const [isCancelling, setIsCancelling] = useState<string | null>(null);
+
+  const fetchSchedules = useCallback(async () => {
+    try {
+      const res = await fetch(`${API_BASE}/api/schedules`);
+      if (res.ok) setSchedules(await res.json());
+    } catch (err) {
+      console.error(err);
+    }
+  }, [API_BASE]);
+
+  useEffect(() => {
+    fetchSchedules();
+  }, [fetchSchedules]);
+
+  const handleCancelSchedule = async (videoId: string) => {
+    if (!window.confirm("Are you sure you want to cancel the schedule for this video?")) return;
+    setIsCancelling(videoId);
+    try {
+      const res = await fetch(`${API_BASE}/api/videos/${videoId}/schedule`, { method: "DELETE" });
+      if (res.ok) {
+        await fetchSchedules();
+        onRefresh();
+      }
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setIsCancelling(null);
+    }
+  };
+
+  const weekDays = Array.from({ length: 7 }, (_, i) => {
+    const d = new Date();
+    d.setDate(d.getDate() + i);
+    return d;
+  });
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: "2rem" }}>
+      
+      {/* Overview */}
+      <div>
+        <h2 style={{ fontSize: "1.5rem", fontWeight: 800 }}>📅 Publish Schedules</h2>
+        <p style={{ fontSize: "0.85rem", color: "hsl(var(--text-muted))" }}>Manage your auto-posting schedule queue for consistent algorithmic growth</p>
+      </div>
+
+      {/* Week Calendar Queue */}
+      <div className="panel">
+        <h3 className="panel-title">Weekly Queue (Next 7 Days)</h3>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: "1rem" }}>
+          {weekDays.map((day, idx) => {
+            const dateOnlyStr = day.toISOString().split("T")[0];
+            
+            const scheduledOnDay = schedules.filter(s => {
+              const sDate = new Date(s.publish_at).toISOString().split("T")[0];
+              return sDate === dateOnlyStr;
+            });
+
+            const isToday = idx === 0;
+
+            return (
+              <div 
+                key={idx} 
+                style={{
+                  background: isToday ? "rgba(168,85,247,0.06)" : "rgba(255,255,255,0.01)",
+                  border: isToday ? "1.5px solid hsl(var(--accent-purple))" : "1px solid hsl(var(--border))",
+                  borderRadius: "8px",
+                  padding: "0.75rem",
+                  minHeight: "150px",
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: "0.5rem"
+                }}
+              >
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid rgba(255,255,255,0.05)", paddingBottom: "0.25rem" }}>
+                  <span style={{ fontSize: "0.75rem", fontWeight: 700, color: isToday ? "hsl(var(--accent-purple))" : "hsl(var(--text-secondary))" }}>
+                    {day.toLocaleDateString('en-US', { weekday: 'short' })}
+                  </span>
+                  <span style={{ fontSize: "0.7rem", color: "hsl(var(--text-muted))" }}>
+                    {day.getDate()}
+                  </span>
+                </div>
+                
+                <div style={{ display: "flex", flexDirection: "column", gap: "0.4rem", flex: 1, overflowY: "auto" }}>
+                  {scheduledOnDay.map((s, sidx) => (
+                    <div 
+                      key={sidx} 
+                      style={{
+                        padding: "0.3rem 0.5rem",
+                        background: "rgba(255,255,255,0.03)",
+                        border: `1px solid ${s.status === 'published' ? 'rgba(34,197,94,0.3)' : 'rgba(255,255,255,0.08)'}`,
+                        borderRadius: "4px",
+                        fontSize: "0.7rem",
+                        lineHeight: 1.25,
+                      }}
+                      title={`${s.video_title}\nPublishing at: ${new Date(s.publish_at).toLocaleTimeString()}`}
+                    >
+                      <div style={{ fontWeight: 600, color: "#fff", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                        {s.video_title}
+                      </div>
+                      <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.6rem", color: "hsl(var(--text-muted))", marginTop: "0.15rem" }}>
+                        <span>{new Date(s.publish_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                        <span style={{ color: s.status === 'published' ? '#22c55e' : s.status === 'failed' ? '#ef4444' : '#3b82f6' }}>
+                          {s.status}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                  {scheduledOnDay.length === 0 && (
+                    <div style={{ fontSize: "0.65rem", color: "hsl(var(--text-muted))", fontStyle: "italic", textAlign: "center", margin: "auto" }}>
+                      Empty
+                    </div>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Schedules Table */}
+      <div className="panel">
+        <h3 className="panel-title">Schedules Queue</h3>
+        {schedules.length === 0 ? (
+          <div style={{ padding: "3rem", textAlign: "center", color: "hsl(var(--text-muted))" }}>
+            No scheduled publishes. Approve and schedule a video from the studio library!
+          </div>
+        ) : (
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", textAlign: "left", fontSize: "0.875rem" }}>
+              <thead>
+                <tr style={{ borderBottom: "1px solid hsl(var(--border))", color: "hsl(var(--text-muted))" }}>
+                  <th style={{ padding: "0.75rem 1rem" }}>Video Title</th>
+                  <th style={{ padding: "0.75rem 1rem" }}>Scheduled Publishing Time</th>
+                  <th style={{ padding: "0.75rem 1rem" }}>Status</th>
+                  <th style={{ padding: "0.75rem 1rem", textAlign: "right" }}>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {schedules.map((s, idx) => (
+                  <tr key={idx} style={{ borderBottom: "1px solid rgba(255,255,255,0.03)" }}>
+                    <td style={{ padding: "1rem", fontWeight: 600, color: "#fff" }}>{s.video_title}</td>
+                    <td style={{ padding: "1rem" }}>{new Date(s.publish_at).toLocaleString()}</td>
+                    <td style={{ padding: "1rem" }}>
+                      <span style={{
+                        padding: "0.25rem 0.5rem",
+                        borderRadius: "4px",
+                        fontSize: "0.7rem",
+                        fontWeight: 700,
+                        textTransform: "uppercase",
+                        backgroundColor: s.status === 'published' ? 'rgba(16,185,129,0.15)' : s.status === 'failed' ? 'rgba(239,68,68,0.15)' : 'rgba(59,130,246,0.15)',
+                        color: s.status === 'published' ? '#10b981' : s.status === 'failed' ? '#ef4444' : '#3b82f6',
+                      }}>
+                        {s.status}
+                      </span>
+                    </td>
+                    <td style={{ padding: "1rem", textAlign: "right" }}>
+                      {s.status === 'pending' ? (
+                        <button 
+                          className="btn btn-secondary" 
+                          onClick={() => handleCancelSchedule(s.video_id)}
+                          disabled={isCancelling === s.video_id}
+                          style={{
+                            padding: "0.3rem 0.75rem",
+                            fontSize: "0.75rem",
+                            backgroundColor: "rgba(239,68,68,0.1)",
+                            borderColor: "rgba(239,68,68,0.2)",
+                            color: "#ef4444"
+                          }}
+                          onMouseEnter={e => e.currentTarget.style.backgroundColor = "rgba(239,68,68,0.2)"}
+                          onMouseLeave={e => e.currentTarget.style.backgroundColor = "rgba(239,68,68,0.1)"}
+                        >
+                          {isCancelling === s.video_id ? "Cancelling..." : "Cancel Schedule"}
+                        </button>
+                      ) : "—"}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ─── Main App ─────────────────────────────────────────────────────────────────
 export default function App() {
   const [videos, setVideos] = useState<Video[]>([]);
   const [queueStats, setQueueStats] = useState<QueueStats>({ waiting: 0, active: 0, completed: 0, failed: 0 });
+
+  const [activeTab, setActiveTab] = useState<'studio' | 'schedules' | 'analytics' | 'branding'>('studio');
 
   // Form states
   const [title, setTitle] = useState("");
@@ -716,7 +1635,49 @@ export default function App() {
         </div>
       </header>
 
-      {/* ── Metrics ── */}
+      {/* ── Navigation Tabs ── */}
+      <nav style={{
+        display: "flex",
+        gap: "0.5rem",
+        borderBottom: "1px solid hsl(var(--border))",
+        paddingBottom: "0.25rem",
+        marginBottom: "0.5rem",
+        flexWrap: "wrap"
+      }}>
+        {[
+          { id: 'studio', label: '🎬 Studio', desc: 'Generate & Review' },
+          { id: 'schedules', label: '📅 Schedules', desc: 'Auto-publish Queue' },
+          { id: 'analytics', label: '📊 Analytics', desc: 'YouTube Stats' },
+          { id: 'branding', label: '🎨 Branding', desc: 'Channel Settings' }
+        ].map((tab) => (
+          <button
+            key={tab.id}
+            type="button"
+            onClick={() => setActiveTab(tab.id as any)}
+            style={{
+              background: activeTab === tab.id ? 'rgba(168, 85, 247, 0.1)' : 'none',
+              border: "none",
+              borderBottom: activeTab === tab.id ? '3px solid hsl(var(--accent-purple))' : '3px solid transparent',
+              color: activeTab === tab.id ? '#fff' : 'hsl(var(--text-secondary))',
+              padding: "0.6rem 1.25rem",
+              borderRadius: "8px 8px 0 0",
+              cursor: "pointer",
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "flex-start",
+              gap: "0.1rem",
+              transition: "all 0.2s ease",
+            }}
+          >
+            <span style={{ fontWeight: 700, fontSize: "0.95rem" }}>{tab.label}</span>
+            <span style={{ fontSize: "0.7rem", color: activeTab === tab.id ? 'rgba(255,255,255,0.5)' : 'hsl(var(--text-muted))' }}>{tab.desc}</span>
+          </button>
+        ))}
+      </nav>
+
+      {/* ── Studio View ── */}
+      {activeTab === 'studio' && (
+        <>
       <section className="metrics-grid">
         <div className="metric-card">
           <span className="metric-title">Active Jobs</span>
@@ -992,11 +1953,28 @@ export default function App() {
                     </div>
                   </div>
                 );
-              })}
+                      })}
             </div>
           )}
         </main>
       </div>
+      </>
+      )}
+
+      {/* ── Schedules View ── */}
+      {activeTab === 'schedules' && (
+        <SchedulesView API_BASE={API_BASE} videos={videos} onRefresh={fetchVideos} />
+      )}
+
+      {/* ── Analytics View ── */}
+      {activeTab === 'analytics' && (
+        <AnalyticsView API_BASE={API_BASE} />
+      )}
+
+      {/* ── Branding View ── */}
+      {activeTab === 'branding' && (
+        <BrandingView API_BASE={API_BASE} />
+      )}
 
       {/* ── HITL Review Modal ── */}
       {reviewVideo && (
@@ -1087,6 +2065,13 @@ export default function App() {
                     <div className="modal-meta-item"><strong>Format: </strong><span>{selectedVideo.video_type === "long" ? "16:9 Long-form" : "9:16 Short"}</span></div>
                     <div className="modal-meta-item"><strong>Video ID: </strong><span style={{ fontFamily: "monospace", fontSize: "0.75rem" }}>{selectedVideo.id}</span></div>
                     <div className="modal-meta-item"><strong>Created: </strong><span>{new Date(selectedVideo.created_at).toLocaleString()}</span></div>
+                    
+                    {selectedVideo.status === "completed" && (
+                      <div style={{ marginTop: "1rem", borderTop: "1px dashed hsl(var(--border))", paddingTop: "1rem" }}>
+                        <h4 style={{ fontSize: "0.75rem", fontWeight: 700, color: "hsl(var(--text-muted))", textTransform: "uppercase", marginBottom: "0.5rem" }}>📅 Posting Schedule</h4>
+                        <VideoScheduler videoId={selectedVideo.id} API_BASE={API_BASE} onScheduled={fetchVideos} />
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>

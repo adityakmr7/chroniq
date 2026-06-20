@@ -12,6 +12,15 @@ import {
   deleteVideoRecord,
   getTrendingTopics,
   saveTrendingTopics,
+  scheduleVideo,
+  cancelSchedule,
+  getAllSchedules,
+  getLatestAnalytics,
+  getAllAnalyticsSummary,
+  setChannelSetting,
+  getAllChannelSettings,
+  saveThumbnailVariants,
+  sql,
 } from "@chroniq/db";
 import {
   generateVoice,
@@ -19,9 +28,14 @@ import {
   generateSRT,
   ALL_VOICES,
   generateDailyTrendingTopics,
+  downloadImage,
+  generateThumbnailVariants,
+  settingsToBranding,
+  brandingToSettings,
 } from "@chroniq/agents";
 import { join } from "node:path";
-import { rm } from "node:fs/promises";
+import { rm, readFile, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
 
 const PORT = parseInt(process.env.PORT || "3000");
 const REDIS_HOST = process.env.REDIS_HOST || "localhost";
@@ -339,6 +353,65 @@ async function startServer() {
           return new Response(JSON.stringify({ success: true, filename }), { headers: corsHeaders });
         }
 
+        // GET /api/videos/:id/metadata - read youtube metadata from output folder
+        if (url.pathname.match(/^\/api\/videos\/[^/]+\/metadata$/) && req.method === "GET") {
+          const id = url.pathname.split("/")[3];
+          const details = await getVideoDetails(id);
+          if (!details) return new Response(JSON.stringify({ error: "Video not found" }), { status: 404, headers: corsHeaders });
+          const slug = slugify(details.video.title);
+          const metaPath = join(process.cwd(), "output", slug, "youtube_meta.json");
+          if (!existsSync(metaPath)) return new Response(JSON.stringify({}), { headers: corsHeaders });
+          const raw = await readFile(metaPath, "utf-8");
+          const meta = JSON.parse(raw);
+          return new Response(JSON.stringify(meta.ytMetadata || meta), { headers: corsHeaders });
+        }
+
+        // PATCH /api/videos/:id/metadata - save edited youtube metadata
+        if (url.pathname.match(/^\/api\/videos\/[^/]+\/metadata$/) && req.method === "PATCH") {
+          const id = url.pathname.split("/")[3];
+          const details = await getVideoDetails(id);
+          if (!details) return new Response(JSON.stringify({ error: "Video not found" }), { status: 404, headers: corsHeaders });
+          const slug = slugify(details.video.title);
+          const metaPath = join(process.cwd(), "output", slug, "youtube_meta.json");
+          const body = await req.json() as { title?: string; description?: string; tags?: string[] };
+          // Merge into existing meta file
+          let existing: any = {};
+          if (existsSync(metaPath)) {
+            existing = JSON.parse(await readFile(metaPath, "utf-8"));
+          }
+          const ytMeta = existing.ytMetadata || existing;
+          ytMeta.title = body.title ?? ytMeta.title;
+          ytMeta.description = body.description ?? ytMeta.description;
+          ytMeta.tags = body.tags ?? ytMeta.tags;
+          if (existing.ytMetadata) {
+            existing.ytMetadata = ytMeta;
+          } else {
+            existing = ytMeta;
+          }
+          await writeFile(metaPath, JSON.stringify(existing, null, 2), "utf-8");
+          return new Response(JSON.stringify({ success: true }), { headers: corsHeaders });
+        }
+
+        // POST /api/videos/:id/scenes/:index/regenerate - re-run image search for one scene
+        if (url.pathname.match(/^\/api\/videos\/[^/]+\/scenes\/\d+\/regenerate$/) && req.method === "POST") {
+          const parts = url.pathname.split("/");
+          const id = parts[3];
+          const sceneIndex = parseInt(parts[5]);
+          const details = await getVideoDetails(id);
+          if (!details) return new Response(JSON.stringify({ error: "Video not found" }), { status: 404, headers: corsHeaders });
+          const slug = slugify(details.video.title);
+          const outputDir = join(process.cwd(), "output", slug);
+          // Load scene manifest to get the searchQuery for this scene
+          const manifest: any[] = details.video.scene_manifest ? JSON.parse(details.video.scene_manifest) : [];
+          const scene = manifest.find((s: any) => s.index === sceneIndex);
+          if (!scene) return new Response(JSON.stringify({ error: "Scene not found" }), { status: 404, headers: corsHeaders });
+          const isShort = (details.video.video_type || "short") === "short";
+          const scenePath = join(outputDir, `scene_${sceneIndex}.jpg`);
+          // Re-run image download with the scene's searchQuery
+          await downloadImage(scene.imagePrompt || scene.searchQuery || "documentary scene", scenePath, isShort, scene.searchQuery);
+          return new Response(JSON.stringify({ success: true }), { headers: corsHeaders });
+        }
+
         // DELETE /api/videos/:id - delete video and files
         if (url.pathname.startsWith("/api/videos/") && req.method === "DELETE") {
           const id = url.pathname.replace("/api/videos/", "");
@@ -380,6 +453,178 @@ async function startServer() {
             }
           }
           return new Response(JSON.stringify(topics), { headers: corsHeaders });
+        }
+
+        // --- Schedule Routes ---
+        
+        // GET /api/schedules - get all schedules
+        if (url.pathname === "/api/schedules" && req.method === "GET") {
+          const schedules = await getAllSchedules();
+          return new Response(JSON.stringify(schedules), { headers: corsHeaders });
+        }
+
+        // POST /api/videos/:id/schedule - schedule a video
+        if (url.pathname.match(/^\/api\/videos\/[^/]+\/schedule$/) && req.method === "POST") {
+          const id = url.pathname.split("/")[3];
+          const body = await req.json() as { publishAt: string };
+          if (!body.publishAt) {
+            return new Response(JSON.stringify({ error: "Missing publishAt date" }), { status: 400, headers: corsHeaders });
+          }
+          const publishDate = new Date(body.publishAt);
+          if (isNaN(publishDate.getTime())) {
+            return new Response(JSON.stringify({ error: "Invalid publishAt date format" }), { status: 400, headers: corsHeaders });
+          }
+          const schedule = await scheduleVideo(id, publishDate);
+          return new Response(JSON.stringify({ success: true, schedule }), { headers: corsHeaders });
+        }
+
+        // DELETE /api/videos/:id/schedule - cancel a pending schedule
+        if (url.pathname.match(/^\/api\/videos\/[^/]+\/schedule$/) && req.method === "DELETE") {
+          const id = url.pathname.split("/")[3];
+          await cancelSchedule(id);
+          return new Response(JSON.stringify({ success: true }), { headers: corsHeaders });
+        }
+
+        // --- Analytics Routes ---
+
+        // GET /api/analytics - aggregate summary statistics
+        if (url.pathname === "/api/analytics" && req.method === "GET") {
+          const summaries = await getAllAnalyticsSummary();
+          const videos = await getVideos();
+          const results = summaries.map(s => {
+            const v = videos.find(vid => vid.id === s.video_id);
+            return {
+              ...s,
+              videoTitle: v?.title || "Unknown Title",
+              youtubeUrl: v?.youtube_url
+            };
+          });
+          return new Response(JSON.stringify(results), { headers: corsHeaders });
+        }
+
+        // GET /api/videos/:id/analytics - history for a single video
+        if (url.pathname.match(/^\/api\/videos\/[^/]+\/analytics$/) && req.method === "GET") {
+          const id = url.pathname.split("/")[3];
+          const rows = await sql`
+            SELECT * FROM video_analytics 
+            WHERE video_id = ${id}
+            ORDER BY fetched_at ASC
+          `;
+          return new Response(JSON.stringify(rows), { headers: corsHeaders });
+        }
+
+        // POST /api/analytics/sync - manually trigger YouTube Analytics sync
+        if (url.pathname === "/api/analytics/sync" && req.method === "POST") {
+          const { getVideosWithYouTubeIds, upsertVideoAnalytics } = await import("@chroniq/db");
+          const { refreshAndFetchAllStats } = await import("@chroniq/agents");
+          
+          console.log("📊 API: Triggering manual YouTube Analytics sync...");
+          const videos = await getVideosWithYouTubeIds();
+          if (videos.length === 0) {
+            return new Response(JSON.stringify({ success: true, count: 0, message: "No uploaded videos with YouTube IDs to sync." }), { headers: corsHeaders });
+          }
+
+          const ids = videos.map(v => v.youtube_video_id).filter(Boolean) as string[];
+          const statsList = await refreshAndFetchAllStats(ids);
+
+          for (const stats of statsList) {
+            const video = videos.find(v => v.youtube_video_id === stats.youtubeVideoId);
+            if (video) {
+              await upsertVideoAnalytics({
+                videoId: video.id,
+                youtubeVideoId: stats.youtubeVideoId,
+                views: stats.views,
+                likes: stats.likes,
+                comments: stats.comments,
+                ctr: stats.ctr,
+                avgViewDuration: stats.avgViewDuration,
+              });
+            }
+          }
+
+          return new Response(JSON.stringify({ success: true, count: statsList.length }), { headers: corsHeaders });
+        }
+
+        // --- Branding / Settings Routes ---
+
+        // GET /api/branding - retrieve channel settings
+        if (url.pathname === "/api/branding" && req.method === "GET") {
+          const settings = await getAllChannelSettings();
+          const branding = settingsToBranding(settings);
+          return new Response(JSON.stringify(branding), { headers: corsHeaders });
+        }
+
+        // POST /api/branding - update channel settings
+        if (url.pathname === "/api/branding" && req.method === "POST") {
+          const body = await req.json() as any;
+          const settingsMap = brandingToSettings(body);
+          for (const [key, val] of Object.entries(settingsMap)) {
+            await setChannelSetting(key, val);
+          }
+          const updated = settingsToBranding(await getAllChannelSettings());
+          return new Response(JSON.stringify({ success: true, branding: updated }), { headers: corsHeaders });
+        }
+
+        // --- Thumbnail A/B Routes ---
+
+        // POST /api/videos/:id/thumbnails/generate-variants - generate A/B testing thumbnail variants
+        if (url.pathname.match(/^\/api\/videos\/[^/]+\/thumbnails\/generate-variants$/) && req.method === "POST") {
+          const id = url.pathname.split("/")[3];
+          const details = await getVideoDetails(id);
+          if (!details) {
+            return new Response(JSON.stringify({ error: "Video not found" }), { status: 404, headers: corsHeaders });
+          }
+
+          const scriptContent = details.script?.content || "";
+          const isShort = (details.video.video_type || "short") === "short";
+          
+          const mockTopic = { 
+            title: details.video.title, 
+            angle: details.video.topic,
+            category: details.video.topic,
+            estimatedViews: 100000
+          };
+          const mockScript = { full: scriptContent, hook: "", body: "", cta: "", wordCount: 0, voiceTone: "dramatic" as const };
+          const mockResearch = { summary: details.video.topic };
+
+          const slug = slugify(details.video.title);
+          const outputDir = join(process.cwd(), "output", slug);
+          
+          console.log(`🎨 Generating thumbnail A/B variants for video: ${id}`);
+          const variants = await generateThumbnailVariants(mockTopic, mockScript as any, mockResearch as any, isShort, outputDir);
+          
+          await saveThumbnailVariants(id, variants);
+          return new Response(JSON.stringify({ success: true, variants }), { headers: corsHeaders });
+        }
+
+        // POST /api/videos/:id/thumbnails/select-variant - select one of the A/B variants
+        if (url.pathname.match(/^\/api\/videos\/[^/]+\/thumbnails\/select-variant$/) && req.method === "POST") {
+          const id = url.pathname.split("/")[3];
+          const details = await getVideoDetails(id);
+          if (!details) {
+            return new Response(JSON.stringify({ error: "Video not found" }), { status: 404, headers: corsHeaders });
+          }
+
+          const body = await req.json() as { index: number };
+          const index = body.index;
+          if (index === undefined || index < 0 || index > 2) {
+            return new Response(JSON.stringify({ error: "Invalid variant index" }), { status: 400, headers: corsHeaders });
+          }
+
+          const slug = slugify(details.video.title);
+          const outputDir = join(process.cwd(), "output", slug);
+          const srcPath = join(outputDir, `thumbnail_${index}.png`);
+          const destPath = join(outputDir, "thumbnail.png");
+
+          if (!existsSync(srcPath)) {
+            return new Response(JSON.stringify({ error: `Variant thumbnail_${index}.png not found` }), { status: 404, headers: corsHeaders });
+          }
+
+          // Copy selected variant to thumbnail.png
+          const fileData = await readFile(srcPath);
+          await writeFile(destPath, fileData);
+
+          return new Response(JSON.stringify({ success: true }), { headers: corsHeaders });
         }
 
         // 5. GET /api/queue-stats - get BullMQ queue metrics
